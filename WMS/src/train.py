@@ -108,7 +108,7 @@ trainLosses, valLosses, testLosses = [], [], []
 trainAccs, valAccs, testAccs = [], [], []
 trainDice, valDice, testDice = [], [], []
 trainIoU, valIoU, testIoU = [], [], []
-numEpochs = 100
+numEpochs = 200
 bestVal = float('inf')
 patienceCtr = 0
 
