@@ -183,3 +183,9 @@ WMS/data/predictions/predicted_masks/
 
 # Claude Code files
 prompt.md
+
+# Ignore saved model weights
+unet_epoch*.pth
+
+# Don't ignore the best model weights
+!best.pth
