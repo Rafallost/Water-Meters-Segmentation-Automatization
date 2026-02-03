@@ -42,6 +42,9 @@ for split, files in splits.items():
 
 os.makedirs("../models", exist_ok=True)
 
+results_dir = os.path.join(datasetPath, '..', 'Results')
+os.makedirs(results_dir, exist_ok=True)
+
 # Load data from folder 'train'
 trainImagePaths = [os.path.join(baseDataDir, 'train', 'images', f)
                    for f in os.listdir(os.path.join(baseDataDir, 'train', 'images')) if f.endswith('.jpg')]
@@ -94,6 +97,9 @@ def count_pixel_balance(mask_paths, dataset_name):
     plt.xlabel("Class")
     plt.ylabel("number of pixels")
     plt.title(f"Pixel distribution for the set: {dataset_name}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f'plot_pixel_balance_{dataset_name.lower()}.png'))
+    print(f"  → Saved plot_pixel_balance_{dataset_name.lower()}.png")
     plt.show()
 
 ############### DEVICE CONFIGURATION ###############
@@ -118,6 +124,9 @@ if __name__ == '__main__':
             pctdistance=0.85, labeldistance=1.1)
     plt.title('Dataset Split', pad=20)
     plt.axis('equal')  # Equal aspect ratio ensures pie is drawn as a circle.
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, 'plot_dataset_split.png'))
+    print(f"  → Saved plot_dataset_split.png")
     plt.show()
 
     # Sample images grid
@@ -131,6 +140,9 @@ if __name__ == '__main__':
         axs[i, 1].set_title("Mask")
         axs[i, 0].axis("off")
         axs[i, 1].axis("off")
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, 'plot_samples.png'))
+    print(f"  → Saved plot_samples.png")
     plt.show()
 
     # PyTorch info

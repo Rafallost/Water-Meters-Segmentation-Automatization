@@ -273,6 +273,9 @@ best_session_path = os.path.join(models_dir, 'best-current-session.pth')
 print(f"\nPrevious best validation loss: {previousBestVal:.4f}")
 print(f"Current session best validation loss: {bestSessionVal:.4f}")
 
+results_dir = os.path.join(os.path.dirname(__file__), '..', 'Results')
+os.makedirs(results_dir, exist_ok=True)
+
 if bestSessionVal < previousBestVal:
     # Current session improved - update best.pth and Terminal.log
     import shutil
@@ -280,8 +283,6 @@ if bestSessionVal < previousBestVal:
     print(f"✓ Updated best.pth with model from epoch {bestSessionEpoch}")
 
     # Save training results to Terminal.log
-    results_dir = os.path.join(os.path.dirname(__file__), '..', 'Results')
-    os.makedirs(results_dir, exist_ok=True)
     log_path = os.path.join(results_dir, 'Terminal.log')
 
     from datetime import datetime
@@ -318,8 +319,7 @@ Models saved:
 
 """
 
-    # Append to file to keep history of improvements
-    with open(log_path, 'a', encoding='utf-8') as f:
+    with open(log_path, 'w', encoding='utf-8') as f:
         f.write(log_content)
 
     print(f"✓ Training results saved to {log_path}")
@@ -332,51 +332,27 @@ else:
 # Summary and plots
 summary(model, input_size=(3, 512, 512))
 
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+metrics = [
+    ('loss',     'Loss',             trainLosses, valLosses, testLosses),
+    ('accuracy', 'Accuracy',         trainAccs,   valAccs,   testAccs),
+    ('dice',     'Dice Coefficient', trainDice,   valDice,   testDice),
+    ('iou',      'IoU',              trainIoU,    valIoU,    testIoU),
+]
 
-# Plot 1: Loss
-axes[0, 0].plot(trainLosses, label='Train', color='tab:blue', marker='o', markersize=3)
-axes[0, 0].plot(valLosses,   label='Val', color='tab:orange', marker='s', markersize=3)
-axes[0, 0].plot(testLosses,  label='Test', color='tab:green', marker='^', markersize=3)
-axes[0, 0].set_xlabel('Epoch')
-axes[0, 0].set_ylabel('Loss')
-axes[0, 0].set_title('Loss vs Epoch')
-axes[0, 0].legend(loc='best')
-axes[0, 0].grid(True, alpha=0.3)
-
-# Plot 2: Accuracy
-axes[0, 1].plot(trainAccs, label='Train', color='tab:blue', marker='o', markersize=3)
-axes[0, 1].plot(valAccs,   label='Val', color='tab:orange', marker='s', markersize=3)
-axes[0, 1].plot(testAccs,  label='Test', color='tab:green', marker='^', markersize=3)
-axes[0, 1].set_xlabel('Epoch')
-axes[0, 1].set_ylabel('Accuracy')
-axes[0, 1].set_title('Accuracy vs Epoch')
-axes[0, 1].legend(loc='best')
-axes[0, 1].grid(True, alpha=0.3)
-
-# Plot 3: Dice Coefficient
-axes[1, 0].plot(trainDice, label='Train', color='tab:blue', marker='o', markersize=3)
-axes[1, 0].plot(valDice,   label='Val', color='tab:orange', marker='s', markersize=3)
-axes[1, 0].plot(testDice,  label='Test', color='tab:green', marker='^', markersize=3)
-axes[1, 0].set_xlabel('Epoch')
-axes[1, 0].set_ylabel('Dice Coefficient')
-axes[1, 0].set_title('Dice Coefficient vs Epoch')
-axes[1, 0].legend(loc='best')
-axes[1, 0].grid(True, alpha=0.3)
-
-# Plot 4: IoU (Intersection over Union)
-axes[1, 1].plot(trainIoU, label='Train', color='tab:blue', marker='o', markersize=3)
-axes[1, 1].plot(valIoU,   label='Val', color='tab:orange', marker='s', markersize=3)
-axes[1, 1].plot(testIoU,  label='Test', color='tab:green', marker='^', markersize=3)
-axes[1, 1].set_xlabel('Epoch')
-axes[1, 1].set_ylabel('IoU')
-axes[1, 1].set_title('IoU vs Epoch')
-axes[1, 1].legend(loc='best')
-axes[1, 1].grid(True, alpha=0.3)
-
-plt.suptitle('Training Metrics', fontsize=16, fontweight='bold')
-plt.tight_layout()
-plt.show()
+for fname, ylabel, train_data, val_data, test_data in metrics:
+    plt.figure(figsize=(8, 5))
+    plt.plot(train_data, label='Train', color='tab:blue',   marker='o', markersize=3)
+    plt.plot(val_data,   label='Val',   color='tab:orange', marker='s', markersize=3)
+    plt.plot(test_data,  label='Test',  color='tab:green',  marker='^', markersize=3)
+    plt.xlabel('Epoch')
+    plt.ylabel(ylabel)
+    plt.title(f'{ylabel} vs Epoch')
+    plt.legend(loc='best')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f'plot_{fname}.png'))
+    print(f"  → Saved plot_{fname}.png")
+    plt.show()
 
 # Load best.pth for final evaluation
 print("\n" + "="*80)
@@ -431,4 +407,7 @@ for i in range(images.shape[0]):
     plt.imshow(preds[i], cmap='gray')
     plt.title('Predicted Mask')
     plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, f'plot_pred_{i}.png'))
+    print(f"  → Saved plot_pred_{i}.png")
     plt.show()
