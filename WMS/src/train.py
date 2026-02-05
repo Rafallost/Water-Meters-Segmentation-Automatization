@@ -444,6 +444,7 @@ with open(log_path, 'w', encoding='utf-8') as f:
     f.write("\n".join(log_lines))
 
 print(f"  → Terminal.log written")
+mlflow.log_artifact(log_path, artifact_path="logs")
 
 # Summary and plots
 summary(model, input_size=(3, 512, 512))
