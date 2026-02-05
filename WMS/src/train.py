@@ -8,6 +8,8 @@ if hasattr(sys.stdout, "reconfigure"):
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 import torch
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
@@ -138,6 +140,7 @@ trainTransforms = TrainTransforms(
     p_vflip=config["augmentation"]["vertical_flip"],
     rotation_degrees=config["augmentation"]["rotation_degrees"],
     p_rotate=config["augmentation"]["rotation_prob"],
+    p_color_jitter=config["augmentation"]["color_jitter_prob"],
 )
 trainDataset = WMSDataset(trainImagePaths, trainMaskPaths, paired_transforms=trainTransforms)
 valDataset   = WMSDataset(valImagePaths,   valMaskPaths,   imageTransforms=valTransforms)
@@ -532,6 +535,6 @@ print("  → Saved metrics.json")
 # Log plots and model to MLflow
 for png in sorted(Path(results_dir).glob("*.png")):
     mlflow.log_artifact(str(png), artifact_path="plots")
-mlflow.pytorch.log_model(model, name="model")
+mlflow.pytorch.log_model(model, name="model", registered_model_name="water-meter-segmentation")
 mlflow.end_run()
 print("  → MLflow run finished")

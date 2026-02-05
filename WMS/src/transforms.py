@@ -33,11 +33,12 @@ class TrainTransforms:
     """
     Training transforms with spatial augmentation applied to both image and mask.
     """
-    def __init__(self, p_hflip=0.5, p_vflip=0.3, rotation_degrees=15, p_rotate=0.5):
+    def __init__(self, p_hflip=0.5, p_vflip=0.3, rotation_degrees=15, p_rotate=0.5, p_color_jitter=0.3):
         self.p_hflip = p_hflip
         self.p_vflip = p_vflip
         self.rotation_degrees = rotation_degrees
         self.p_rotate = p_rotate
+        self.p_color_jitter = p_color_jitter
 
     def __call__(self, image, mask):
         """
@@ -80,7 +81,7 @@ class TrainTransforms:
         image_np = median_blur(image_np)
 
         # Color jitter (only for image)
-        if random.random() < 0.3:
+        if random.random() < self.p_color_jitter:
             brightness_factor = random.uniform(0.8, 1.2)
             image_np = np.clip(image_np * brightness_factor, 0.0, 1.0)
 
