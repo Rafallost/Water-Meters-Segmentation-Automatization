@@ -1,0 +1,36 @@
+# Hyperparameters extracted from original train.py
+
+model:
+  architecture: "unet"
+  input_channels: 3
+  output_channels: 1
+  input_size: 512
+
+training:
+  epochs: 100
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  early_stopping_patience: 5
+
+  scheduler:
+    factor: 0.5
+    patience: 3
+    min_lr: 0.000001
+
+data:
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+
+augmentation:
+  horizontal_flip: 0.5
+  vertical_flip: 0.3
+  rotation_degrees: 10
+  rotation_prob: 0.5
+  color_jitter_prob: 0.3
+
+# Baseline metrics from Water-Meters-Segmentation (for quality gate)
+baseline:
+  min_dice: 0.90
+  min_iou: 0.85

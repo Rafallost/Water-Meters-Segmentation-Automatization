@@ -1,0 +1,26 @@
+stages:
+  prepare:
+    cmd: python WMS/src/prepareDataset.py
+    deps:
+      - WMS/data/training/images
+      - WMS/data/training/masks
+      - WMS/src/prepareDataset.py
+    outs:
+      - WMS/data/training/temp/train
+      - WMS/data/training/temp/val
+      - WMS/data/training/temp/test
+
+  train:
+    cmd: python WMS/src/train.py --config WMS/configs/train.yaml
+    deps:
+      - WMS/data/training/temp/train
+      - WMS/data/training/temp/val
+      - WMS/data/training/temp/test
+      - WMS/src/train.py
+      - WMS/src/model.py
+      - WMS/src/dataset.py
+      - WMS/src/transforms.py
+      - WMS/configs/train.yaml
+    metrics:
+      - WMS/models/metrics.json:
+          cache: false
