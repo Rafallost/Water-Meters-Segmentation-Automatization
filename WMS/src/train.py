@@ -178,6 +178,7 @@ trainLosses, valLosses, testLosses = [], [], []
 trainAccs, valAccs, testAccs = [], [], []
 trainDice, valDice, testDice = [], [], []
 trainIoU, valIoU, testIoU = [], [], []
+epoch_logs = []
 numEpochs = config["training"]["epochs"]
 bestVal = float('inf')
 patienceCtr = 0
@@ -328,10 +329,12 @@ for epoch in range(1, numEpochs + 1):
     testIoU.append(avgTestIoU)
 
     # Logging
-    print(f"Epoch {epoch}/{numEpochs}"
-          f" - Train Loss: {avgTrainLoss:.4f}, Acc: {avgTrainAcc:.4f}, Dice: {avgTrainDice:.4f}, IoU: {avgTrainIoU:.4f}"
-          f" - Val Loss: {avgValLoss:.4f}, Acc: {avgValAcc:.4f}, Dice: {avgValDice:.4f}, IoU: {avgValIoU:.4f}"
-          f" - Test Loss: {avgTestLoss:.4f}, Acc: {avgTestAcc:.4f}, Dice: {avgTestDice:.4f}, IoU: {avgTestIoU:.4f}")
+    epoch_line = (f"Epoch {epoch}/{numEpochs}"
+                  f" - Train Loss: {avgTrainLoss:.4f}, Acc: {avgTrainAcc:.4f}, Dice: {avgTrainDice:.4f}, IoU: {avgTrainIoU:.4f}"
+                  f" - Val Loss: {avgValLoss:.4f}, Acc: {avgValAcc:.4f}, Dice: {avgValDice:.4f}, IoU: {avgValIoU:.4f}"
+                  f" - Test Loss: {avgTestLoss:.4f}, Acc: {avgTestAcc:.4f}, Dice: {avgTestDice:.4f}, IoU: {avgTestIoU:.4f}")
+    print(epoch_line)
+    epoch_logs.append(epoch_line)
 
     mlflow.log_metrics({
         "train_loss": avgTrainLoss, "train_dice": avgTrainDice, "train_iou": avgTrainIoU,
@@ -384,58 +387,63 @@ results_dir = os.path.join(os.path.dirname(__file__), '..', 'Results')
 os.makedirs(results_dir, exist_ok=True)
 
 if bestSessionVal < previousBestVal:
-    # Current session improved - update best.pth and Terminal.log
     import shutil
     shutil.copy(best_session_path, best_path)
     print(f"✓ Updated best.pth with model from epoch {bestSessionEpoch}")
-
-    # Save training results to Terminal.log
-    log_path = os.path.join(results_dir, 'Terminal.log')
-
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    log_content = f"""
-{'='*80}
-Training Session - {timestamp}
-{'='*80}
-Configuration:
-  - Epochs: {numEpochs}
-  - Early stopping patience: {config["training"]["early_stopping_patience"]}
-  - Learning rate: {config["training"]["learning_rate"]}
-  - Batch size: {config["training"]["batch_size"]}
-  - Seed: {args.seed}
-
-Best Model (epoch {bestSessionEpoch}):
-  Validation Metrics:
-    - Loss: {bestSessionMetrics['val_loss']:.4f}
-    - Accuracy: {bestSessionMetrics['val_acc']:.4f}
-    - Dice: {bestSessionMetrics['val_dice']:.4f}
-    - IoU: {bestSessionMetrics['val_iou']:.4f}
-
-  Test Metrics:
-    - Loss: {bestSessionMetrics['test_loss']:.4f}
-    - Accuracy: {bestSessionMetrics['test_acc']:.4f}
-    - Dice: {bestSessionMetrics['test_dice']:.4f}
-    - IoU: {bestSessionMetrics['test_iou']:.4f}
-
-Models saved:
-  - best.pth (global best) - UPDATED
-  - best-current-session.pth (this session)
-  - unet_epoch1.pth to unet_epoch{epoch}.pth
-{'='*80}
-
-"""
-
-    with open(log_path, 'w', encoding='utf-8') as f:
-        f.write(log_content)
-
-    print(f"✓ Training results saved to {log_path}")
+    improved = True
 else:
-    # Current session did not improve
     print(f"✗ Current session did not improve best.pth (difference: {bestSessionVal - previousBestVal:+.4f})")
-    print(f"  best.pth and Terminal.log were NOT updated")
     print(f"  best-current-session.pth saved for reference")
+    improved = False
+
+# Always write Terminal.log (every session, regardless of improvement)
+from datetime import datetime
+log_path = os.path.join(results_dir, 'Terminal.log')
+timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+log_lines = [
+    "",
+    "=" * 80,
+    f"Training Session - {timestamp}",
+    "=" * 80,
+    f"Status: {'IMPROVED — best.pth updated' if improved else 'NOT IMPROVED'}",
+    f"Previous best val_loss: {previousBestVal:.4f}",
+    f"Session best  val_loss: {bestSessionVal:.4f}",
+    "",
+    "Configuration:",
+    f"  - Epochs: {numEpochs}",
+    f"  - Early stopping patience: {config['training']['early_stopping_patience']}",
+    f"  - Learning rate: {config['training']['learning_rate']}",
+    f"  - Batch size: {config['training']['batch_size']}",
+    f"  - Seed: {args.seed}",
+    "",
+    "--- Per-epoch metrics ---",
+    *epoch_logs,
+    "",
+    f"Best Model (epoch {bestSessionEpoch}):",
+    "  Validation Metrics:",
+    f"    - Loss: {bestSessionMetrics['val_loss']:.4f}",
+    f"    - Accuracy: {bestSessionMetrics['val_acc']:.4f}",
+    f"    - Dice: {bestSessionMetrics['val_dice']:.4f}",
+    f"    - IoU: {bestSessionMetrics['val_iou']:.4f}",
+    "",
+    "  Test Metrics:",
+    f"    - Loss: {bestSessionMetrics['test_loss']:.4f}",
+    f"    - Accuracy: {bestSessionMetrics['test_acc']:.4f}",
+    f"    - Dice: {bestSessionMetrics['test_dice']:.4f}",
+    f"    - IoU: {bestSessionMetrics['test_iou']:.4f}",
+    "",
+    "Models saved:",
+    f"  - best-current-session.pth (this session)",
+    f"  - unet_epoch1.pth to unet_epoch{epoch}.pth",
+    "=" * 80,
+    "",
+]
+
+with open(log_path, 'w', encoding='utf-8') as f:
+    f.write("\n".join(log_lines))
+
+print(f"  → Terminal.log written")
 
 # Summary and plots
 summary(model, input_size=(3, 512, 512))
