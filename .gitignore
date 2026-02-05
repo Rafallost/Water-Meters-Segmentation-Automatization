@@ -168,22 +168,24 @@ cython_debug/
 .idea/
 
 # Generated data splits (created by prepareDataset.py)
-WMS/data/training/temp/train/
-WMS/data/training/temp/test/
-WMS/data/training/temp/val/
+# Note: DVC also declares this path as an output in dvc.yaml; this entry is a
+# safety net so that running prepareDataset.py outside DVC does not commit splits.
+WMS/data/training/temp/
 
-# Generated prediction outputs (created by predicts.py)
+# Local model checkpoints — MLflow is source of truth, not Git
+WMS/models/
+
+# Generated plots
+WMS/Results/
+
+# Prediction outputs
 WMS/data/predictions/predicted_masks/
+
+# DVC internals
+.dvc/tmp/
 
 # Ruff stuff:
 .ruff_cache/
 
 # PyPI configuration file
 .pypirc
-
-# Ignore saved model weights
-unet_epoch*.pth
-best-current-session.pth
-
-# Don't ignore the best model weights
-!best.pth
