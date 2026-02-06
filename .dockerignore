@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# DVC
+.dvc
+*.dvc
+dvc.yaml
+dvc.lock
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+*.egg
+build/
+dist/
+
+# Local data and models
+WMS/data/
+WMS/models/
+WMS/Results/
+mlruns/
+mlflow.db
+
+# Infrastructure
+infrastructure/
+devops/
+.github/
+
+# Documentation
+*.md
+PHASE5-STATUS.md
+README.md
+
+# Test files
+test-*.txt

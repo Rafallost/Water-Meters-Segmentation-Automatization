@@ -1,0 +1,60 @@
+# Helm values override for Water Meters Segmentation model deployment
+# This file overrides default values from devops/helm/ml-model/values.yaml
+
+replicaCount: 1
+
+image:
+  repository: "055677744286.dkr.ecr.us-east-1.amazonaws.com/wms-model"
+  pullPolicy: Always
+  tag: "latest"
+
+service:
+  type: NodePort
+  port: 8000
+  targetPort: 8000
+  # nodePort: 30080  # Optional: can specify fixed NodePort
+
+resources:
+  # Conservative limits for t3.small instance
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+
+# Environment variables specific to this deployment
+env:
+  - name: MODEL_PATH
+    value: "/app/models/best.pth"
+  - name: MLFLOW_TRACKING_URI
+    value: "http://localhost:5000"  # MLflow on same EC2 instance
+  - name: MODEL_VERSION
+    value: "production"
+  - name: PYTHONUNBUFFERED
+    value: "1"
+
+# Probes configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Prometheus service monitor
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics

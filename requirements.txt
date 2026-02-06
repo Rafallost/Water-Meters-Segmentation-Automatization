@@ -14,3 +14,4 @@ fastapi
 uvicorn
 prometheus-client
 pytest
+requests
