@@ -191,3 +191,4 @@ mlruns/
 
 # PyPI configuration file
 .pypirc
+/test-dvc.txt
