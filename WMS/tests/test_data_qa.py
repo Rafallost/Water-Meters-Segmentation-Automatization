@@ -5,16 +5,19 @@ import sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
+import importlib.util
 
-# Add devops scripts to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "devops" / "scripts"))
+# Add devops scripts to path and import data_qa module
+devops_scripts_path = Path(__file__).parent.parent.parent / "devops" / "scripts"
+data_qa_path = devops_scripts_path / "data-qa.py"
 
-try:
-    from devops.scripts.data_qa import validate_data
-except ImportError:
-    # Fallback import path
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from devops.scripts.data_qa import validate_data
+# Load module dynamically
+spec = importlib.util.spec_from_file_location("data_qa", data_qa_path)
+data_qa_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(data_qa_module)
+
+# Import validate_data function
+validate_data = data_qa_module.validate_data
 
 
 # =============================================================================
