@@ -172,9 +172,10 @@ cython_debug/
 # safety net so that running prepareDataset.py outside DVC does not commit splits.
 WMS/data/training/temp/
 
-# Training data - tracked by DVC, not Git
-WMS/data/training/images/
-WMS/data/training/masks/
+# Training data - for POC tracked in Git (small dataset)
+# TODO: Move to DVC for production with larger datasets
+# WMS/data/training/images/
+# WMS/data/training/masks/
 
 # Local model checkpoints — MLflow is source of truth, not Git
 WMS/models/*
