@@ -138,10 +138,18 @@ def gather_paths(split):
     img_dir = os.path.join(baseDataDir, split, "images")
     mask_dir = os.path.join(baseDataDir, split, "masks")
     images = sorted(
-        [os.path.join(img_dir, f) for f in os.listdir(img_dir) if f.endswith((".jpg", ".png"))]
+        [
+            os.path.join(img_dir, f)
+            for f in os.listdir(img_dir)
+            if f.endswith((".jpg", ".png"))
+        ]
     )
     masks = sorted(
-        [os.path.join(mask_dir, f) for f in os.listdir(mask_dir) if f.endswith((".jpg", ".png"))]
+        [
+            os.path.join(mask_dir, f)
+            for f in os.listdir(mask_dir)
+            if f.endswith((".jpg", ".png"))
+        ]
     )
     return images, masks
 

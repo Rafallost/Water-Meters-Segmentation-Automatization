@@ -24,16 +24,23 @@ sourceImageDir = os.path.join(datasetPath, "..", "data", "training", "images")
 sourceMaskDir = os.path.join(datasetPath, "..", "data", "training", "masks")
 
 # Get images and masks names
-imageFiles = sorted([f for f in os.listdir(sourceImageDir) if f.endswith((".jpg", ".png"))])
-maskFiles = sorted([f for f in os.listdir(sourceMaskDir) if f.endswith((".jpg", ".png"))])
+imageFiles = sorted(
+    [f for f in os.listdir(sourceImageDir) if f.endswith((".jpg", ".png"))]
+)
+maskFiles = sorted(
+    [f for f in os.listdir(sourceMaskDir) if f.endswith((".jpg", ".png"))]
+)
 
 # Create mapping from stem to full filename for masks (images and masks may have different extensions)
 from pathlib import Path
+
 mask_map = {Path(f).stem: f for f in maskFiles}
 image_stems = [Path(f).stem for f in imageFiles]
 
 # Verify all images have corresponding masks
-assert len(imageFiles) == len(maskFiles), "Amount of images and masks have to be the same"
+assert len(imageFiles) == len(maskFiles), (
+    "Amount of images and masks have to be the same"
+)
 for stem in image_stems:
     assert stem in mask_map, f"No mask found for image with stem: {stem}"
 
