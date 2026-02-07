@@ -17,6 +17,11 @@ on:
         required: false
         default: '3'
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   # Start EC2 infrastructure before training
   start-infra:
