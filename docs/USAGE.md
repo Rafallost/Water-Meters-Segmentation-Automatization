@@ -259,7 +259,7 @@ terraform apply
 ```
 
 **Common changes:**
-- Change EC2 instance type (t3.small → t3.medium)
+- Change EC2 instance type (t3.large → t3.medium)
 - Update security group rules
 - Adjust storage size
 

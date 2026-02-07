@@ -161,12 +161,12 @@ Output: 512×512 binary mask (meter region)
 ## 💰 Cost Breakdown
 
 **Current (with ephemeral infrastructure):**
-- EC2 (t3.small, ephemeral): ~$2-3/month
+- EC2 (t3.large, ephemeral): ~$2-3/month
 - S3 storage: ~$1/month
 - **Total: ~$4/month**
 
 **Traditional (24/7 EC2):**
-- EC2 (t3.small, always on): ~$15/month
+- EC2 (t3.large, always on): ~$15/month
 - S3 storage: ~$1/month
 - **Total: ~$18/month**
 
