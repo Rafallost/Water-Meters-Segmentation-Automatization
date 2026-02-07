@@ -5,14 +5,14 @@ on:
     branches:
       - main
     paths:
-      - 'WMS/data/training/**'
+      - 'WMS/data/training/*.dvc'  # DVC metadata files
       - 'WMS/src/**'
       - 'WMS/configs/**'
   pull_request:
     branches:
       - main
     paths:
-      - 'WMS/data/training/**'
+      - 'WMS/data/training/*.dvc'  # DVC metadata files
       - 'WMS/src/**'
       - 'WMS/configs/**'
   workflow_dispatch:  # Allow manual trigger
