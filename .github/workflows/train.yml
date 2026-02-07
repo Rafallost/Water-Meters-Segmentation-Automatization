@@ -1,0 +1,228 @@
+name: Train Model
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'WMS/data/training/**'
+      - 'WMS/src/**'
+      - 'WMS/configs/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'WMS/data/training/**'
+      - 'WMS/src/**'
+      - 'WMS/configs/**'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  train:
+    runs-on: self-hosted  # Runs on EC2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install dvc[s3]
+
+      - name: Configure AWS credentials
+        run: |
+          # AWS credentials should be configured on EC2 instance via IAM role
+          # No need to pass secrets - instance profile handles it
+          aws sts get-caller-identity
+
+      - name: Pull training data with DVC
+        run: |
+          cd WMS/data/training
+          dvc pull images.dvc masks.dvc || echo "DVC pull failed, using local data"
+
+      - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: http://localhost:5000
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          cd WMS/src
+          python train.py --config ../configs/train.yaml --seed ${{ github.run_number }}
+
+      - name: Get training results
+        id: results
+        run: |
+          # Extract metrics from latest MLflow run
+          python3 << 'EOF'
+          import mlflow
+          import json
+          import os
+
+          mlflow.set_tracking_uri("http://localhost:5000")
+          client = mlflow.tracking.MlflowClient()
+
+          # Get latest run from experiment
+          experiment = client.get_experiment_by_name("water-meter-segmentation")
+          if experiment:
+              runs = client.search_runs(
+                  experiment_ids=[experiment.experiment_id],
+                  order_by=["start_time DESC"],
+                  max_results=1
+              )
+
+              if runs:
+                  run = runs[0]
+                  metrics = run.data.metrics
+
+                  # Baseline from original model
+                  baseline_dice = 0.9275
+                  baseline_iou = 0.8865
+
+                  # Quality gate thresholds (2% tolerance)
+                  threshold_dice = 0.9075
+                  threshold_iou = 0.8665
+
+                  current_dice = metrics.get('val_dice', 0)
+                  current_iou = metrics.get('val_iou', 0)
+
+                  passed = current_dice >= threshold_dice and current_iou >= threshold_iou
+                  improved = current_dice > baseline_dice or current_iou > baseline_iou
+
+                  result = {
+                      "run_id": run.info.run_id,
+                      "metrics": {
+                          "dice": current_dice,
+                          "iou": current_iou
+                      },
+                      "baseline": {
+                          "dice": baseline_dice,
+                          "iou": baseline_iou
+                      },
+                      "thresholds": {
+                          "dice": threshold_dice,
+                          "iou": threshold_iou
+                      },
+                      "passed": passed,
+                      "improved": improved
+                  }
+
+                  print(json.dumps(result, indent=2))
+
+                  # Save for PR comment
+                  with open('training_results.json', 'w') as f:
+                      json.dump(result, f, indent=2)
+
+                  # Output for GitHub Actions
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write(f"passed={str(passed).lower()}\n")
+                      f.write(f"improved={str(improved).lower()}\n")
+                      f.write(f"dice={current_dice}\n")
+                      f.write(f"iou={current_iou}\n")
+              else:
+                  print("No runs found")
+          else:
+              print("Experiment not found")
+          EOF
+
+      - name: Promote model to Production
+        if: steps.results.outputs.improved == 'true'
+        run: |
+          python3 << 'EOF'
+          import mlflow
+          from mlflow.tracking import MlflowClient
+          import json
+
+          mlflow.set_tracking_uri("http://localhost:5000")
+          client = MlflowClient()
+
+          # Load results
+          with open('training_results.json', 'r') as f:
+              results = json.load(f)
+
+          run_id = results['run_id']
+
+          # Create new model version
+          model_version = client.create_model_version(
+              name="water-meter-segmentation",
+              source=f"runs:/{run_id}/model",
+              run_id=run_id
+          )
+
+          print(f"Created model version: {model_version.version}")
+
+          # Transition to Production
+          client.transition_model_version_stage(
+              name="water-meter-segmentation",
+              version=model_version.version,
+              stage="Production",
+              archive_existing_versions=True
+          )
+
+          print(f"Model version {model_version.version} promoted to Production!")
+          EOF
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let results;
+            try {
+              results = JSON.parse(fs.readFileSync('training_results.json', 'utf8'));
+            } catch (e) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: '❌ **Training failed** - could not read results'
+              });
+              return;
+            }
+
+            const passed = results.passed ? '✅' : '❌';
+            const improved = results.improved ? '📈 **IMPROVED**' : '📊';
+
+            const body = `
+            ## ${passed} Training Results
+
+            ${improved}
+
+            ### Metrics
+            | Metric | Current | Baseline | Threshold | Status |
+            |--------|---------|----------|-----------|--------|
+            | **Dice** | ${results.metrics.dice.toFixed(4)} | ${results.baseline.dice} | ${results.thresholds.dice} | ${results.metrics.dice >= results.thresholds.dice ? '✅' : '❌'} |
+            | **IoU** | ${results.metrics.iou.toFixed(4)} | ${results.baseline.iou} | ${results.thresholds.iou} | ${results.metrics.iou >= results.thresholds.iou ? '✅' : '❌'} |
+
+            ### Quality Gate
+            - **Passed**: ${results.passed ? 'YES ✅' : 'NO ❌'}
+            - **Improved over baseline**: ${results.improved ? 'YES 📈' : 'NO'}
+
+            ${results.improved ? '🚀 **Model will be promoted to Production on merge**' : '⚠️ Model did not improve - will not be deployed'}
+
+            ---
+            🤖 Generated by [Claude Code](https://claude.com/claude-code)
+            `;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: body
+            });
+
+      - name: Fail if quality gate not passed
+        if: steps.results.outputs.passed != 'true'
+        run: |
+          echo "❌ Quality gate failed!"
+          echo "Model must meet minimum thresholds: Dice ≥ 0.9075, IoU ≥ 0.8665"
+          exit 1
