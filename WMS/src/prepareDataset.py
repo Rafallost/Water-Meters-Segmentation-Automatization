@@ -38,9 +38,9 @@ mask_map = {Path(f).stem: f for f in maskFiles}
 image_stems = [Path(f).stem for f in imageFiles]
 
 # Verify all images have corresponding masks
-assert len(imageFiles) == len(maskFiles), (
-    "Amount of images and masks have to be the same"
-)
+assert len(imageFiles) == len(
+    maskFiles
+), "Amount of images and masks have to be the same"
 for stem in image_stems:
     assert stem in mask_map, f"No mask found for image with stem: {stem}"
 
