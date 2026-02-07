@@ -26,9 +26,16 @@ sourceMaskDir = os.path.join(datasetPath, "..", "data", "training", "masks")
 # Get images and masks names
 imageFiles = sorted([f for f in os.listdir(sourceImageDir) if f.endswith((".jpg", ".png"))])
 maskFiles = sorted([f for f in os.listdir(sourceMaskDir) if f.endswith((".jpg", ".png"))])
-assert len(imageFiles) == len(
-    maskFiles
-), "Amount of images and masks have to be the same"
+
+# Create mapping from stem to full filename for masks (images and masks may have different extensions)
+from pathlib import Path
+mask_map = {Path(f).stem: f for f in maskFiles}
+image_stems = [Path(f).stem for f in imageFiles]
+
+# Verify all images have corresponding masks
+assert len(imageFiles) == len(maskFiles), "Amount of images and masks have to be the same"
+for stem in image_stems:
+    assert stem in mask_map, f"No mask found for image with stem: {stem}"
 
 # 80% train, 10% val, 10% test
 trainImgs, tempImgs = train_test_split(imageFiles, test_size=0.2, random_state=42)
@@ -41,14 +48,18 @@ baseDataDir = os.path.join(datasetPath, "..", "data", "training", "temp")
 for split, files in splits.items():
     for subfolder in ["images", "masks"]:
         os.makedirs(os.path.join(baseDataDir, split, subfolder), exist_ok=True)
-    for fname in files:
+    for img_fname in files:
+        # Copy image
         shutil.copy(
-            os.path.join(sourceImageDir, fname),
-            os.path.join(baseDataDir, split, "images", fname),
+            os.path.join(sourceImageDir, img_fname),
+            os.path.join(baseDataDir, split, "images", img_fname),
         )
+        # Find and copy corresponding mask (may have different extension)
+        img_stem = Path(img_fname).stem
+        mask_fname = mask_map[img_stem]
         shutil.copy(
-            os.path.join(sourceMaskDir, fname),
-            os.path.join(baseDataDir, split, "masks", fname),
+            os.path.join(sourceMaskDir, mask_fname),
+            os.path.join(baseDataDir, split, "masks", mask_fname),
         )
 
 os.makedirs("../models", exist_ok=True)
