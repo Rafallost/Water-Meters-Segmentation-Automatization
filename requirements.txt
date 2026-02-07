@@ -16,3 +16,4 @@ python-multipart
 prometheus-client
 pytest
 requests
+boto3
