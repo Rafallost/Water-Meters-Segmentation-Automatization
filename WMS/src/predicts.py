@@ -24,7 +24,7 @@ model.load_state_dict(checkpoint)
 model.eval()
 
 for fname in os.listdir(custom_dir):
-    if not fname.lower().endswith(".jpg"):
+    if not fname.lower().endswith((".jpg", ".png")):
         continue
     img_path = os.path.join(custom_dir, fname)
     # 1) Load and convert to RGB

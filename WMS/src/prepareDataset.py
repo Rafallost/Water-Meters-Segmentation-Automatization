@@ -24,8 +24,8 @@ sourceImageDir = os.path.join(datasetPath, "..", "data", "training", "images")
 sourceMaskDir = os.path.join(datasetPath, "..", "data", "training", "masks")
 
 # Get images and masks names
-imageFiles = sorted([f for f in os.listdir(sourceImageDir) if f.endswith(".jpg")])
-maskFiles = sorted([f for f in os.listdir(sourceMaskDir) if f.endswith(".jpg")])
+imageFiles = sorted([f for f in os.listdir(sourceImageDir) if f.endswith((".jpg", ".png"))])
+maskFiles = sorted([f for f in os.listdir(sourceMaskDir) if f.endswith((".jpg", ".png"))])
 assert len(imageFiles) == len(
     maskFiles
 ), "Amount of images and masks have to be the same"
@@ -60,34 +60,34 @@ os.makedirs(results_dir, exist_ok=True)
 trainImagePaths = [
     os.path.join(baseDataDir, "train", "images", f)
     for f in os.listdir(os.path.join(baseDataDir, "train", "images"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 trainMaskPaths = [
     os.path.join(baseDataDir, "train", "masks", f)
     for f in os.listdir(os.path.join(baseDataDir, "train", "masks"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 
 testImagePaths = [
     os.path.join(baseDataDir, "test", "images", f)
     for f in os.listdir(os.path.join(baseDataDir, "test", "images"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 testMaskPaths = [
     os.path.join(baseDataDir, "test", "masks", f)
     for f in os.listdir(os.path.join(baseDataDir, "test", "masks"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 
 valImagePaths = [
     os.path.join(baseDataDir, "val", "images", f)
     for f in os.listdir(os.path.join(baseDataDir, "val", "images"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 valMaskPaths = [
     os.path.join(baseDataDir, "val", "masks", f)
     for f in os.listdir(os.path.join(baseDataDir, "val", "masks"))
-    if f.endswith(".jpg")
+    if f.endswith((".jpg", ".png"))
 ]
 
 trainDataset = WMSDataset(trainImagePaths, trainMaskPaths, valTransforms)
