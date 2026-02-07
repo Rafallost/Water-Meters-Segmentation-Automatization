@@ -12,18 +12,17 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Configure AWS (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::036136800740:role/github-actions-role
-          aws-region: eu-central-1
+      # No need to configure AWS credentials - EC2 instance has IAM role (LabInstanceProfile)
+      # Self-hosted runner inherits EC2's instance profile credentials automatically
 
       - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          aws ecr get-login-password --region us-east-1 | \
+            docker login --username AWS --password-stdin 055677744286.dkr.ecr.us-east-1.amazonaws.com
 
       - name: Build + Push Docker
         run: |
-          ECR_REPO=036136800740.dkr.ecr.eu-central-1.amazonaws.com/wms-model
+          ECR_REPO=055677744286.dkr.ecr.us-east-1.amazonaws.com/wms-model
           docker build -f docker/Dockerfile.serve -t $ECR_REPO:latest .
           docker push $ECR_REPO:latest
 
