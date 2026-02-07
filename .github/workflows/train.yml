@@ -49,6 +49,21 @@ jobs:
           cd WMS/data/training
           dvc pull images.dvc masks.dvc || echo "DVC pull failed, using local data"
 
+      - name: Data Quality Assurance
+        run: |
+          python devops/scripts/data-qa.py WMS/data/training/ --output data_qa_report.json
+
+          # Display summary
+          cat data_qa_report.json
+
+          # Check if passed
+          if grep -q '"status": "FAIL"' data_qa_report.json; then
+            echo "❌ Data QA failed! Check report above."
+            exit 1
+          fi
+
+          echo "✅ Data QA passed!"
+
       - name: Train model
         env:
           MLFLOW_TRACKING_URI: http://localhost:5000
