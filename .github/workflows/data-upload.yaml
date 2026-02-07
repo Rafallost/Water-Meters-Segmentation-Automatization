@@ -11,7 +11,7 @@ on:
 
 jobs:
   validate-and-process:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,11 +49,19 @@ jobs:
           exit $QA_STATUS
 
       # If QA PASSED: DVC add/push and create PR
+      - name: Configure AWS credentials
+        if: steps.data_qa.outputs.status == '0'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
       - name: Configure DVC
         if: steps.data_qa.outputs.status == '0'
         run: |
           # DVC config should already be set in .dvc/config
-          # AWS credentials from EC2 instance role
           dvc remote list
 
       - name: DVC add and push training data
