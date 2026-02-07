@@ -1,0 +1,159 @@
+name: EC2 Infrastructure Control
+
+# Reusable workflow for starting/stopping EC2 instance
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: 'Action to perform: start or stop'
+        required: true
+        type: string
+    outputs:
+      instance_id:
+        description: 'EC2 instance ID'
+        value: ${{ jobs.control.outputs.instance_id }}
+      public_ip:
+        description: 'EC2 public IP address'
+        value: ${{ jobs.control.outputs.public_ip }}
+      mlflow_url:
+        description: 'MLflow tracking server URL'
+        value: ${{ jobs.control.outputs.mlflow_url }}
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      instance_id: ${{ steps.info.outputs.instance_id }}
+      public_ip: ${{ steps.info.outputs.public_ip }}
+      mlflow_url: ${{ steps.info.outputs.mlflow_url }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Get EC2 instance info
+        id: info
+        run: |
+          # Find instance by tag
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=wms-mlops-k3s" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+
+          if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "❌ EC2 instance not found!"
+            echo "Make sure Terraform infrastructure is deployed."
+            exit 1
+          fi
+
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "✅ Found instance: $INSTANCE_ID"
+
+          # Get Elastic IP (will be same after start)
+          PUBLIC_IP=$(aws ec2 describe-addresses \
+            --filters "Name=tag:Name,Values=wms-mlops-eip" \
+            --query 'Addresses[0].PublicIp' \
+            --output text)
+
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "mlflow_url=http://${PUBLIC_IP}:5000" >> $GITHUB_OUTPUT
+          echo "✅ Elastic IP: $PUBLIC_IP"
+
+      - name: Start EC2 instance
+        if: inputs.action == 'start'
+        run: |
+          INSTANCE_ID="${{ steps.info.outputs.instance_id }}"
+
+          # Check current state
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+
+          echo "Current state: $STATE"
+
+          if [ "$STATE" = "running" ]; then
+            echo "✅ Instance is already running"
+          elif [ "$STATE" = "stopped" ]; then
+            echo "🚀 Starting instance..."
+            aws ec2 start-instances --instance-ids $INSTANCE_ID
+
+            echo "⏳ Waiting for instance to start..."
+            aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+            echo "✅ Instance is running"
+          else
+            echo "⚠️ Instance is in state: $STATE (waiting...)"
+            sleep 30
+          fi
+
+      - name: Wait for MLflow to be ready
+        if: inputs.action == 'start'
+        run: |
+          PUBLIC_IP="${{ steps.info.outputs.public_ip }}"
+          MLFLOW_URL="http://${PUBLIC_IP}:5000"
+
+          echo "⏳ Waiting for MLflow to be ready at $MLFLOW_URL"
+          echo "This may take 2-5 minutes for first boot (Docker, k3s, MLflow startup)..."
+
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -sf "$MLFLOW_URL/health" > /dev/null 2>&1; then
+              echo "✅ MLflow is ready!"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - MLflow not ready yet..."
+            sleep 10
+          done
+
+          echo "❌ MLflow did not become ready in time"
+          echo "Check EC2 user-data logs: ssh ec2-user@$PUBLIC_IP 'sudo tail -100 /var/log/cloud-init-output.log'"
+          exit 1
+
+      - name: Stop EC2 instance
+        if: inputs.action == 'stop'
+        run: |
+          INSTANCE_ID="${{ steps.info.outputs.instance_id }}"
+
+          # Check current state
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+
+          echo "Current state: $STATE"
+
+          if [ "$STATE" = "stopped" ]; then
+            echo "✅ Instance is already stopped"
+          elif [ "$STATE" = "running" ]; then
+            echo "🛑 Stopping instance..."
+            aws ec2 stop-instances --instance-ids $INSTANCE_ID
+
+            echo "⏳ Waiting for instance to stop..."
+            aws ec2 wait instance-stopped --instance-ids $INSTANCE_ID
+            echo "✅ Instance is stopped"
+          else
+            echo "⚠️ Instance is in state: $STATE"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## EC2 Control Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Action:** ${{ inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Instance ID:** ${{ steps.info.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Public IP:** ${{ steps.info.outputs.public_ip }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ inputs.action }}" = "start" ]; then
+            echo "**MLflow URL:** ${{ steps.info.outputs.mlflow_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
