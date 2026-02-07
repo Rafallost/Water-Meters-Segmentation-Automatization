@@ -67,15 +67,23 @@ jobs:
       - name: DVC add and push training data
         if: steps.data_qa.outputs.status == '0'
         run: |
-          echo "Adding training data to DVC..."
+          echo "Checking if data is tracked by Git or DVC..."
 
-          # Add images and masks to DVC
-          dvc add WMS/data/training/images
-          dvc add WMS/data/training/masks
+          # Check if data is in Git (POC mode) or needs DVC
+          if git ls-files --error-unmatch WMS/data/training/images/ > /dev/null 2>&1; then
+            echo "⚠️  Training data is tracked by Git (POC mode)"
+            echo "Skipping DVC add/push"
+            echo "For production, move to DVC tracking for large datasets"
+          else
+            echo "Adding training data to DVC..."
+            # Add images and masks to DVC
+            dvc add WMS/data/training/images
+            dvc add WMS/data/training/masks
 
-          # Push to S3
-          echo "Pushing data to S3..."
-          dvc push
+            # Push to S3
+            echo "Pushing data to S3..."
+            dvc push
+          fi
 
           # Commit .dvc files
           git config user.name "github-actions[bot]"
