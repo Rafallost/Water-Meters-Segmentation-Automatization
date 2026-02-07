@@ -53,8 +53,8 @@ readinessProbe:
   timeoutSeconds: 5
   failureThreshold: 3
 
-# Prometheus service monitor
+# Prometheus service monitor (disabled until Prometheus is deployed)
 serviceMonitor:
-  enabled: true
+  enabled: false
   interval: 30s
   path: /metrics
