@@ -9,6 +9,10 @@ on:
       - '!data/staging'
       - '!data/new'
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   validate-and-process:
     runs-on: ubuntu-latest
