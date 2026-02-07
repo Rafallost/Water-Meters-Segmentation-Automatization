@@ -6,7 +6,7 @@ aws_region        = "us-east-1"
 availability_zone = "us-east-1a"
 
 # EC2 Configuration
-instance_type = "t3.small" # Can upgrade to t3.medium for Phase 7 (monitoring)
+instance_type = "t3.large" # 8GB RAM, 2 vCPU - required for ML workloads
 
 # Your IP address for SSH access (get it from: curl ifconfig.me)
 # MUST end with /32
