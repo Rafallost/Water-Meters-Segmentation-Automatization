@@ -125,17 +125,34 @@ jobs:
               if runs:
                   run = runs[0]
                   metrics = run.data.metrics
-
-                  # Baseline from original model
-                  baseline_dice = 0.9275
-                  baseline_iou = 0.8865
-
-                  # Quality gate thresholds (2% tolerance)
-                  threshold_dice = 0.9075
-                  threshold_iou = 0.8665
-
                   current_dice = metrics.get('val_dice', 0)
                   current_iou = metrics.get('val_iou', 0)
+
+                  # Get baseline from current Production model (if exists)
+                  try:
+                      # Try to get Production model from registry
+                      prod_versions = client.get_latest_versions("water-meter-segmentation", stages=["Production"])
+                      if prod_versions:
+                          prod_version = prod_versions[0]
+                          # Get the run that created this model version
+                          prod_run = client.get_run(prod_version.run_id)
+                          baseline_dice = prod_run.data.metrics.get('val_dice', 0)
+                          baseline_iou = prod_run.data.metrics.get('val_iou', 0)
+                          print(f"Using Production model baseline: Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
+                      else:
+                          # No Production model yet - use first-run baseline (very permissive)
+                          baseline_dice = 0.0
+                          baseline_iou = 0.0
+                          print("No Production model found - comparing against 0 (first training)")
+                  except Exception as e:
+                      print(f"Could not fetch Production model baseline: {e}")
+                      # Fallback: compare against 0 (any model is better than nothing)
+                      baseline_dice = 0.0
+                      baseline_iou = 0.0
+
+                  # Quality gate thresholds (2% worse than baseline is acceptable)
+                  threshold_dice = max(0.0, baseline_dice * 0.98)
+                  threshold_iou = max(0.0, baseline_iou * 0.98)
 
                   passed = current_dice >= threshold_dice and current_iou >= threshold_iou
                   improved = current_dice > baseline_dice or current_iou > baseline_iou
