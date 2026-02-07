@@ -42,7 +42,7 @@ jobs:
         run: |
           # Find instance by tag
           INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=wms-mlops-k3s" \
+            --filters "Name=tag:Name,Values=wms-k3s" \
             --query 'Reservations[0].Instances[0].InstanceId' \
             --output text)
 
@@ -57,7 +57,7 @@ jobs:
 
           # Get Elastic IP (will be same after start)
           PUBLIC_IP=$(aws ec2 describe-addresses \
-            --filters "Name=tag:Name,Values=wms-mlops-eip" \
+            --filters "Name=tag:Name,Values=wms-eip" \
             --query 'Addresses[0].PublicIp' \
             --output text)
 
