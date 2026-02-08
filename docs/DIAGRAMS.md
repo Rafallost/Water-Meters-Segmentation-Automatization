@@ -336,8 +336,8 @@ graph LR
         W --> X[predicts.py]
     end
 
-    style U fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px
-    style W fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px
+    style U fill:#28a745,stroke:#1e7e34,color:#fff
+    style W fill:#28a745,stroke:#1e7e34,color:#fff
 ```
 
 ---
@@ -388,7 +388,7 @@ graph TB
         S --> T[Slack/Email Notifications]
     end
 
-    style N fill:#87CEEB
+    style N fill:#28a745,stroke:#1e7e34,color:#fff
 ```
 
 ---
