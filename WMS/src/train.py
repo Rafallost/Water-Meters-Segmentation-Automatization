@@ -21,6 +21,8 @@ import hashlib
 from pathlib import Path
 import mlflow
 import mlflow.pytorch
+import time
+import requests
 
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -252,6 +254,50 @@ if os.path.exists(best_path):
 tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 if tracking_uri:
     mlflow.set_tracking_uri(tracking_uri)
+
+
+def check_mlflow_health(uri, max_retries=3, timeout=10):
+    """Test MLflow connectivity before starting run to avoid long hangs."""
+    if not uri:
+        print("⚠️  No MLFLOW_TRACKING_URI set, using local tracking")
+        return True
+
+    print(f"🔍 Testing MLflow connectivity: {uri}")
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"   Attempt {attempt}/{max_retries}...", end=" ", flush=True)
+            response = requests.get(f"{uri}/health", timeout=timeout)
+            if response.status_code == 200:
+                print("✅ Connected!")
+                return True
+            else:
+                print(f"❌ HTTP {response.status_code}")
+        except requests.exceptions.Timeout:
+            print(f"⏱️  Timeout after {timeout}s")
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Connection failed: {e}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+
+        if attempt < max_retries:
+            wait = 2**attempt  # Exponential backoff: 2s, 4s, 8s
+            print(f"   Retrying in {wait}s...")
+            time.sleep(wait)
+
+    print(f"\n❌ Failed to connect to MLflow after {max_retries} attempts")
+    print(f"   URI: {uri}")
+    print(f"   This usually means:")
+    print(f"   1. EC2 instance is not running")
+    print(f"   2. MLflow service is not started on EC2")
+    print(f"   3. Security group blocks port 5000")
+    print(f"   4. Network connectivity issue")
+    sys.exit(1)
+
+
+# Check MLflow connectivity before starting expensive operations
+check_mlflow_health(tracking_uri)
+
 mlflow.set_experiment("water-meter-segmentation")
 mlflow.start_run(run_name=get_model_version())
 mlflow.log_params(
