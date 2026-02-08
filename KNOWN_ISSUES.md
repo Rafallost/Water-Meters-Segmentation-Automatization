@@ -442,5 +442,128 @@ git push
 
 ---
 
+## AWS Academy Lab: S3 Upload Restrictions Prevent MLflow Artifact Storage
+
+**Status:** Workaround implemented
+
+**Issue:**
+AWS Academy Lab accounts have explicit IAM deny policies that prevent `s3:PutObject` operations on MLflow artifacts bucket. Training completes successfully, but artifact uploads (plots, logs, model files) fail with `AccessDenied` errors, causing the workflow to fail overall.
+
+**Symptoms:**
+```
+boto3.exceptions.S3UploadFailedError: Failed to upload plot_accuracy.png to
+wms-mlflow-artifacts-055677744286/1/.../artifacts/plots/plot_accuracy.png:
+An error occurred (AccessDenied) when calling the PutObject operation:
+User: arn:aws:sts::055677744286:assumed-role/voclabs/user4220764=rzablotni
+is not authorized to perform: s3:PutObject on resource: "arn:aws:s3:::..."
+with an explicit deny in an identity-based policy
+```
+
+**Root cause:**
+- AWS Academy Lab uses `voclabs` IAM role with restrictive policies
+- **Explicit deny** policies cannot be overridden (highest precedence in IAM)
+- S3 bucket policy allowing `PutObject` is insufficient against explicit deny
+- Training runs in GitHub Actions, but S3 bucket is in AWS Academy account
+- GitHub Actions OIDC role has cross-account access, but still subject to bucket policies
+
+**Impact:**
+- Training succeeds, model is saved locally
+- Artifacts (plots, logs) cannot be uploaded to S3
+- Model cannot be registered to MLflow Model Registry (requires S3 storage)
+- Training workflow exits with failure status even though training succeeded
+- Deployment pipeline cannot access new model versions
+
+**Workaround implemented:**
+Modified `WMS/src/train.py` to gracefully handle S3 upload failures:
+
+```python
+# Wrap all artifact uploads in try-except blocks
+try:
+    mlflow.log_artifact(str(png), artifact_path="plots")
+    print("  → Plots uploaded to MLflow")
+except Exception as e:
+    print(f"  ⚠️  Warning: Could not upload plots to MLflow: {e}")
+    print("  → Plots saved locally in Results/ directory")
+
+try:
+    mlflow.pytorch.log_model(
+        model, name="model", registered_model_name="water-meter-segmentation"
+    )
+    print("  → Model registered to MLflow")
+except Exception as e:
+    print(f"  ⚠️  Warning: Could not register model to MLflow: {e}")
+    print("  → Model saved locally as best.pth")
+    print("  → AWS Academy Lab restricts S3 uploads. Model registration skipped.")
+```
+
+**Result:**
+- Training completes successfully (exit code 0)
+- Metrics are logged to MLflow tracking server (SQLite backend - no S3 needed)
+- Artifacts saved locally in `Results/` directory
+- Clear warning messages explain S3 upload failures
+- Workflow succeeds, allowing CI/CD to continue
+
+**Limitations:**
+- No model versioning in MLflow Model Registry
+- No artifact lineage across training runs
+- Cannot deploy models directly from MLflow (use local `best.pth` instead)
+- Manual model management required
+
+**Alternative solutions (not implemented):**
+1. **Use local artifact storage:**
+   - Change MLflow `--default-artifact-root` to local filesystem path
+   - Pros: No S3 needed
+   - Cons: Artifacts lost when EC2 terminates, no remote access
+
+2. **Separate S3 bucket in GitHub Actions account:**
+   - Create S3 bucket in personal AWS account (not Academy)
+   - Configure cross-account access from EC2
+   - Pros: Full S3 access, proper artifact storage
+   - Cons: Additional AWS account required, more complex setup
+
+3. **Alternative artifact storage (Azure, GCS):**
+   - Use non-AWS storage backend
+   - Pros: Not subject to AWS Academy restrictions
+   - Cons: Requires additional cloud provider, authentication complexity
+
+**Verification:**
+Check training logs for successful graceful degradation:
+```bash
+# Should see warnings but exit 0:
+  → Training succeeded, but artifact upload failed (AWS Academy restriction)
+  ⚠️  Warning: Could not upload plots to MLflow: ...
+  ⚠️  Warning: Could not register model to MLflow: ...
+  → Model saved locally as best.pth
+  → MLflow run finished
+```
+
+**IAM Policy Example:**
+```json
+{
+  "Effect": "Deny",
+  "Action": [
+    "s3:PutObject",
+    "s3:PutObjectAcl"
+  ],
+  "Resource": "*",
+  "Condition": {
+    "StringEquals": {
+      "aws:PrincipalOrgID": "voclabs"
+    }
+  }
+}
+```
+This deny cannot be overridden by any allow policy.
+
+**References:**
+- [AWS IAM Policy Evaluation Logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
+- [MLflow Artifact Stores](https://mlflow.org/docs/latest/tracking.html#artifact-stores)
+- Related workflow: [Run #21798024629](https://github.com/Rafallost/Water-Meters-Segmentation-Autimatization/actions/runs/21798024629)
+
+**Date discovered:** 2026-02-08
+**Date fixed:** 2026-02-08
+
+---
+
 ## End of known issues
 
