@@ -105,6 +105,84 @@ python WMS/src/predicts.py
 
 ---
 
+## 🛠️ Model Management Commands
+
+Quick reference for working with ML models:
+
+### Download Model from MLflow
+
+```bash
+# Download Production model (first time or after new training)
+python WMS/scripts/sync_model_aws.py
+
+# Options:
+python WMS/scripts/sync_model_aws.py --force      # Re-download even if cached
+python WMS/scripts/sync_model_aws.py --no-stop    # Keep EC2 running after download
+```
+
+**What it does:**
+- ✅ Starts EC2 instance (if stopped)
+- ✅ Waits for MLflow to be ready (~2-5 min)
+- ✅ Downloads Production model to `WMS/models/production.pth`
+- ✅ Asks if you want to stop EC2 (saves costs)
+
+### Run Predictions
+
+```bash
+# Run predictions using downloaded model
+python WMS/src/predicts.py
+
+# Place images in: WMS/data/predictions/photos_to_predict/
+# Results saved to: WMS/data/predictions/predicted_masks/
+```
+
+**Requirements:** Model must be downloaded first (see above)
+
+### Check Model Metrics
+
+```bash
+# Show Production model performance
+python WMS/scripts/show_metrics.py
+
+# Show all model versions and their metrics
+python WMS/scripts/show_metrics.py --all
+```
+
+**Output:**
+- Dice score, IoU, Loss metrics
+- Training parameters (LR, batch size, epochs)
+- Quality assessment (Excellent/Good/Mediocre/Poor)
+- All 14 versions with timestamps
+
+### Manage Model Versions
+
+```bash
+# Check which models exist and their stages
+python WMS/scripts/check_model.py
+
+# Promote a specific version to Production (interactive)
+# Script will ask for confirmation before promoting
+```
+
+**Use cases:**
+- See all model versions (1-14 in your case)
+- Check which version is in Production stage
+- Manually promote a model to Production
+
+### Browse Models in MLflow UI
+
+```bash
+# 1. Start EC2 (if not running)
+python WMS/scripts/sync_model_aws.py --no-stop
+
+# 2. Open browser: http://100.49.195.150:5000
+#    - Click "Models" → "water-meter-segmentation"
+#    - See all versions with full metrics and artifacts
+#    - View training curves and model parameters
+```
+
+---
+
 ## 📚 Documentation
 
 **[→ Full Documentation Index](docs/README.md)** 📖

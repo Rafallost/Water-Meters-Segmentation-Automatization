@@ -108,6 +108,46 @@ gh workflow run ec2-manual-control.yaml -f action=start
 
 ---
 
+## 🛠️ Additional Commands
+
+### Check Model Performance
+
+```bash
+# View Production model metrics
+python WMS/scripts/show_metrics.py
+
+# Output:
+# - Dice score, IoU, Loss
+# - Training parameters
+# - Quality assessment (Excellent/Good/Poor)
+```
+
+### Manage Model Versions
+
+```bash
+# See all model versions and promote
+python WMS/scripts/check_model.py
+
+# Lists all 14 versions
+# Shows which is Production
+# Offers to promote if needed
+```
+
+### View All Versions with Metrics
+
+```bash
+# Compare all trained models
+python WMS/scripts/show_metrics.py --all
+
+# Shows:
+# Version 14: 🏆 PRODUCTION - Dice: 0.32
+# Version 13: None - Dice: 0.13
+# Version 12: None - Dice: 0.53
+# ...
+```
+
+---
+
 ## 📖 Full Documentation
 
 - **[README.md](README.md)** - Project overview and features

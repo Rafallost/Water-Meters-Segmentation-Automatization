@@ -222,6 +222,206 @@ Open in browser: http://<EC2_IP>:5000
 
 ---
 
+## 🛠️ Model Management Scripts
+
+Complete reference for all model management tools.
+
+### sync_model_aws.py - Download Production Model
+
+**Purpose:** Automatically download the latest Production model from MLflow.
+
+**Usage:**
+```bash
+# Basic usage - download model
+python WMS/scripts/sync_model_aws.py
+
+# Re-download even if cached
+python WMS/scripts/sync_model_aws.py --force
+
+# Keep EC2 running (for multiple operations)
+python WMS/scripts/sync_model_aws.py --no-stop
+
+# Windows: just double-click
+sync_model_aws.bat
+```
+
+**What it does:**
+1. ✅ Checks AWS CLI and credentials
+2. ✅ Finds EC2 instance (tag: wms-k3s)
+3. ✅ Starts EC2 if stopped (~3 min)
+4. ✅ Waits for MLflow to be ready (~2-5 min)
+5. ✅ Downloads Production model to `WMS/models/production.pth`
+6. ✅ Asks if you want to stop EC2
+
+**When to use:**
+- After first `git clone` (required)
+- After merging PR with improved model
+- When you see "No model found" error
+
+**Time:** ~5-7 minutes (includes EC2 startup)
+**Cost:** ~$0.01 per run (EC2 runs briefly then stops)
+
+---
+
+### show_metrics.py - Check Model Performance
+
+**Purpose:** Quickly view Production model metrics and quality assessment.
+
+**Usage:**
+```bash
+# Show Production model metrics
+python WMS/scripts/show_metrics.py
+
+# Show all model versions
+python WMS/scripts/show_metrics.py --all
+```
+
+**Example output:**
+```
+============================================================
+PRODUCTION MODEL - Version 14
+============================================================
+
+Run ID: d8f1681809f4467e8235b56a6f4d86dd
+Created: 2026-02-08 02:36:55
+Status: FINISHED
+
+Metrics:
+    test_dice: 0.3161
+    test_iou: 0.1945
+    test_loss: 0.5184
+    val_dice: 0.3240
+    val_iou: 0.1945
+
+Key Parameters:
+    learning_rate: 0.0001
+    batch_size: 4
+    epochs: 100
+
+============================================================
+❌ POOR MODEL (Dice < 50%) - Retraining recommended!
+============================================================
+```
+
+**Quality thresholds:**
+- ✅ **Excellent:** Dice ≥ 85%
+- ⚠️ **Good:** Dice 70-85%
+- ⚠️ **Mediocre:** Dice 50-70%
+- ❌ **Poor:** Dice < 50%
+
+**Requires:** EC2 running with MLflow accessible
+
+---
+
+### check_model.py - Manage Model Versions
+
+**Purpose:** View all model versions and promote models to Production stage.
+
+**Usage:**
+```bash
+python WMS/scripts/check_model.py
+```
+
+**What it does:**
+1. Lists all model versions (1-14 in your case)
+2. Shows current stage for each (Production, Staging, None)
+3. If no Production model, offers to promote latest version
+4. Interactive prompt for confirmation
+
+**Example output:**
+```
+Found 14 version(s):
+
+  Version 14:
+    Stage: Production <<< PRODUCTION
+    Run ID: d8f168180...
+
+  Version 13:
+    Stage: None
+    Run ID: abc123...
+
+  Version 12:
+    Stage: None
+    Run ID: def456...
+
+[OK] 1 version(s) in Production stage
+
+You can now download the model:
+  python WMS/scripts/sync_model_aws.py
+```
+
+**When to use:**
+- Check which model is currently Production
+- Manually promote a specific version
+- After training to verify new model was registered
+
+---
+
+### predicts.py - Run Predictions
+
+**Purpose:** Generate segmentation masks for new water meter images.
+
+**Usage:**
+```bash
+# 1. Place images in this folder:
+WMS/data/predictions/photos_to_predict/
+
+# 2. Run predictions
+python WMS/src/predicts.py
+
+# 3. Results saved to:
+WMS/data/predictions/predicted_masks/
+```
+
+**Model loading priority:**
+1. `WMS/models/production.pth` (downloaded from MLflow) ✅
+2. `WMS/models/best.pth` (legacy, if exists)
+3. Error if no model found (with download instructions)
+
+**Supported formats:** `.jpg`, `.png`
+
+**Output:** Binary masks (0/255) showing water meter regions
+
+---
+
+## 🔄 Complete Workflow Example
+
+### Scenario: Train new model, download, and use for predictions
+
+```bash
+# 1. Add new training data
+cp /path/to/images/*.jpg WMS/data/training/images/
+cp /path/to/masks/*.png WMS/data/training/masks/
+
+# 2. Commit and push (triggers training)
+git add WMS/data/training/
+git commit -m "data: add 10 new samples"
+git push
+
+# 3. Wait for GitHub Actions workflow (~10 min)
+# Check PR for training results
+
+# 4. Check metrics of new model
+python WMS/scripts/show_metrics.py --all
+
+# 5. If satisfied, merge PR (or auto-merged if improved)
+gh pr merge <PR_NUMBER>
+
+# 6. Download the new Production model
+python WMS/scripts/sync_model_aws.py --force
+
+# 7. Verify model was downloaded
+ls -lh WMS/models/production.pth
+
+# 8. Run predictions with new model
+python WMS/src/predicts.py
+
+# 9. View results
+ls WMS/data/predictions/predicted_masks/
+```
+
+---
+
 ## 🔍 Check MLflow Experiment Tracking
 
 View all training runs, metrics, and models:
