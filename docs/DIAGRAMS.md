@@ -59,9 +59,9 @@ graph TB
         V --> Y
     end
 
-    style P fill:#90EE90
-    style Q fill:#FFB6C1
-    style H fill:#FFB6C1
+    style P fill:#d4edda,stroke:#2e7d32,color:#000
+    style Q fill:#f8d7da,stroke:#842029,color:#000
+    style H fill:#f8d7da,stroke:#842029,color:#000
 ```
 
 ---
@@ -420,6 +420,7 @@ gantt
 ```
 
 **Cost Comparison:**
+
 - Traditional: $18/month (24/7 running)
 - Ephemeral: $4/month (100h/month usage)
 - **Savings: 70%** 🎯
@@ -474,6 +475,7 @@ journey
 ### For Thesis
 
 These diagrams are ready to use in your bachelor's thesis:
+
 - Export as PNG/SVG from Mermaid Live Editor
 - Or screenshot from GitHub rendering
 - All diagrams are properly labeled and professional
