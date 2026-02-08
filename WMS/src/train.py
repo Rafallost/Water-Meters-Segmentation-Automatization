@@ -21,8 +21,6 @@ import hashlib
 from pathlib import Path
 import mlflow
 import mlflow.pytorch
-import time
-import requests
 
 from torch import nn, optim
 from torch.utils.data import DataLoader
