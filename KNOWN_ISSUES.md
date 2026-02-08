@@ -148,5 +148,92 @@ sudo lsof /path/to/mlruns.db
 
 ---
 
+## MLflow Gunicorn Worker Timeout - GitHub Actions Connection Hangs
+
+**Status:** Fixed
+
+**Issue:**
+Training workflow hangs for 7+ minutes when trying to connect to MLflow from GitHub Actions, despite MLflow responding instantly to local curl tests (0.028s). Gunicorn logs show repeated `WORKER TIMEOUT` errors and workers being killed.
+
+**Symptoms:**
+```bash
+# From EC2 MLflow logs:
+[CRITICAL] WORKER TIMEOUT (pid:12345)
+Worker with pid 12345 was terminated due to signal 9
+Booting worker with pid: 12346
+
+# From GitHub Actions:
+Run echo '=== Training Attempt 1/3 ==='
+# ... hangs for 7+ minutes at mlflow.start_run()
+```
+
+**Root cause:**
+- Gunicorn default worker timeout: **30 seconds**
+- GitHub Actions → EC2 connection over internet takes longer than 30s
+- Worker times out before request completes, gets killed by master process
+- Creates infinite cycle: new worker spawned → times out → killed → repeat
+- **Paradox**: Local curl succeeds in 0.028s because it's localhost (no network latency)
+
+**Network confirmation:**
+- EC2 security group allows port 5000 from 0.0.0.0/0 ✅
+- MLflow server responds to health checks ✅
+- System resources normal (CPU 84% idle, 4.7GB free RAM) ✅
+- Issue is purely gunicorn timeout, not MLflow performance
+
+**Fix:**
+Added explicit gunicorn timeout configuration to MLflow systemd service (`user-data.sh`):
+
+```bash
+ExecStart=/usr/local/bin/mlflow server \
+  --backend-store-uri sqlite:////opt/mlflow/mlflow.db \
+  --default-artifact-root s3://${mlflow_bucket}/ \
+  --host 0.0.0.0 \
+  --gunicorn-opts "--timeout 300 --workers 2 --keep-alive 120"
+```
+
+**Configuration explained:**
+- `--timeout 300`: 5 minutes worker timeout (matches MLFLOW_HTTP_REQUEST_TIMEOUT in workflow)
+- `--workers 2`: Explicit worker count (prevents spawning too many)
+- `--keep-alive 120`: 2 minute keep-alive for slow connections (helps with internet latency)
+
+**Deployment:**
+```bash
+# Apply Terraform changes (recreates EC2 with new user-data)
+cd devops/terraform
+terraform apply
+
+# Or manually restart MLflow on existing instance:
+ssh -i ~/.ssh/labsuser.pem ec2-user@<EC2_IP>
+sudo systemctl daemon-reload
+sudo systemctl restart mlflow
+sudo systemctl status mlflow
+```
+
+**Verification:**
+```bash
+# Check gunicorn is using new timeout
+ssh -i ~/.ssh/labsuser.pem ec2-user@<EC2_IP>
+sudo journalctl -u mlflow -f
+
+# Should see on startup:
+# [INFO] Listening at: http://0.0.0.0:5000
+# [INFO] Using worker: sync
+# [INFO] Booting worker with pid: xxxxx
+# (No more WORKER TIMEOUT errors)
+```
+
+**Related issues:**
+- MLflow 503 errors (KNOWN_ISSUES.md) - SQLite concurrent writes
+- Connection Refused (KNOWN_ISSUES.md) - Disk full preventing MLflow startup
+
+**References:**
+- [Gunicorn Settings](https://docs.gunicorn.org/en/stable/settings.html#timeout)
+- [MLflow Server Options](https://mlflow.org/docs/latest/cli.html#mlflow-server)
+
+**Date discovered:** 2026-02-08
+**Date fixed:** 2026-02-08
+
+---
+
 ## End of known issues
 
