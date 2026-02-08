@@ -125,6 +125,12 @@ jobs:
 
           echo "✅ Data QA passed!"
 
+      - name: Wait for MLflow server to stabilize
+        if: matrix.attempt > 1
+        run: |
+          echo "⏳ Waiting 60 seconds for MLflow server to recover from previous attempt..."
+          sleep 60
+
       - name: Train model (Attempt ${{ matrix.attempt }})
         env:
           MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
