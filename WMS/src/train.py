@@ -256,47 +256,14 @@ if tracking_uri:
     mlflow.set_tracking_uri(tracking_uri)
 
 
-def check_mlflow_health(uri, max_retries=3, timeout=5):
-    """Test MLflow connectivity before starting run to avoid long hangs."""
-    if not uri:
-        print("⚠️  No MLFLOW_TRACKING_URI set, using local tracking")
-        return True
-
-    print(f"🔍 Testing MLflow connectivity: {uri}")
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            print(f"   Attempt {attempt}/{max_retries}...", end=" ", flush=True)
-            # Use both connect and read timeouts (tuple format is more reliable)
-            response = requests.get(
-                f"{uri}/health",
-                timeout=(timeout, timeout),  # (connect_timeout, read_timeout)
-            )
-            if response.status_code == 200:
-                print("✅ Connected!")
-                return True
-            else:
-                print(f"❌ HTTP {response.status_code}")
-        except requests.exceptions.Timeout:
-            print(f"⏱️  Timeout after {timeout}s")
-        except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection failed")
-        except Exception as e:
-            print(f"❌ Error: {type(e).__name__}")
-
-        if attempt < max_retries:
-            wait = 2  # Fixed 2s wait instead of exponential
-            print(f"   Retrying in {wait}s...")
-            time.sleep(wait)
-
-    # Don't fail - continue with training (MLflow might be slow but working)
-    print(f"\n⚠️  Warning: Could not verify MLflow connectivity after {max_retries} attempts")
-    print(f"   Continuing anyway - if MLflow is down, training will fail later with clear error")
-    return True  # Let training proceed and fail naturally if MLflow is truly down
-
-
-# Check MLflow connectivity before starting expensive operations
-check_mlflow_health(tracking_uri)
+# Inform about potential delay when connecting to remote MLflow
+if tracking_uri:
+    print("=" * 80)
+    print("🔗 Connecting to MLflow server...")
+    print(f"   MLflow URI: {tracking_uri}")
+    print("   ⏱️  Note: Initial connection from GitHub Actions may take 3-5 minutes")
+    print("   This is normal due to network routing. Please be patient.")
+    print("=" * 80)
 
 mlflow.set_experiment("water-meter-segmentation")
 mlflow.start_run(run_name=get_model_version())
