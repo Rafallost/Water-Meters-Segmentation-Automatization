@@ -193,13 +193,16 @@ python WMS/scripts/sync_model_aws.py --no-stop
 |----------|-------------|--------------|
 | **[WORKFLOWS.md](docs/WORKFLOWS.md)** | ⭐ **Start here!** All pipelines explained | Understanding the system |
 | **[USAGE.md](docs/USAGE.md)** | Step-by-step how-to guide | Daily operations |
+| **[DIAGRAMS.md](docs/DIAGRAMS.md)** | 🎨 Visual system diagrams (10 Mermaid charts) | Visual learners, thesis |
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | System design & components | Deep dive |
+| **[MONITORING.md](docs/MONITORING.md)** | Prometheus + Grafana setup | Observability & testing |
 | **[BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)** | GitHub setup guide | One-time setup |
 
 **For Developers:**
 - [Implementation Plan](devops/PLAN.md) - Development phases
 - [Terraform Docs](devops/terraform/README.md) - Infrastructure
 - [Tests Guide](WMS/tests/README.md) - Unit tests
+- [Scripts README](WMS/scripts/README.md) - Model management tools
 
 **For AI Assistants:**
 - [CLAUDE.md](devops/CLAUDE.md) - Project context and rules
