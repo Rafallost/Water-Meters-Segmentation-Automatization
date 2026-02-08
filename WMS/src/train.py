@@ -256,7 +256,7 @@ if tracking_uri:
     mlflow.set_tracking_uri(tracking_uri)
 
 
-def check_mlflow_health(uri, max_retries=3, timeout=10):
+def check_mlflow_health(uri, max_retries=3, timeout=5):
     """Test MLflow connectivity before starting run to avoid long hangs."""
     if not uri:
         print("⚠️  No MLFLOW_TRACKING_URI set, using local tracking")
@@ -267,7 +267,11 @@ def check_mlflow_health(uri, max_retries=3, timeout=10):
     for attempt in range(1, max_retries + 1):
         try:
             print(f"   Attempt {attempt}/{max_retries}...", end=" ", flush=True)
-            response = requests.get(f"{uri}/health", timeout=timeout)
+            # Use both connect and read timeouts (tuple format is more reliable)
+            response = requests.get(
+                f"{uri}/health",
+                timeout=(timeout, timeout),  # (connect_timeout, read_timeout)
+            )
             if response.status_code == 200:
                 print("✅ Connected!")
                 return True
@@ -276,23 +280,19 @@ def check_mlflow_health(uri, max_retries=3, timeout=10):
         except requests.exceptions.Timeout:
             print(f"⏱️  Timeout after {timeout}s")
         except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection failed: {e}")
+            print(f"❌ Connection failed")
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error: {type(e).__name__}")
 
         if attempt < max_retries:
-            wait = 2**attempt  # Exponential backoff: 2s, 4s, 8s
+            wait = 2  # Fixed 2s wait instead of exponential
             print(f"   Retrying in {wait}s...")
             time.sleep(wait)
 
-    print(f"\n❌ Failed to connect to MLflow after {max_retries} attempts")
-    print(f"   URI: {uri}")
-    print(f"   This usually means:")
-    print(f"   1. EC2 instance is not running")
-    print(f"   2. MLflow service is not started on EC2")
-    print(f"   3. Security group blocks port 5000")
-    print(f"   4. Network connectivity issue")
-    sys.exit(1)
+    # Don't fail - continue with training (MLflow might be slow but working)
+    print(f"\n⚠️  Warning: Could not verify MLflow connectivity after {max_retries} attempts")
+    print(f"   Continuing anyway - if MLflow is down, training will fail later with clear error")
+    return True  # Let training proceed and fail naturally if MLflow is truly down
 
 
 # Check MLflow connectivity before starting expensive operations
