@@ -336,8 +336,8 @@ graph LR
         W --> X[predicts.py]
     end
 
-    style U fill:#90EE90
-    style W fill:#90EE90
+    style U fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px
+    style W fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px
 ```
 
 ---
@@ -349,8 +349,8 @@ Prometheus + Grafana integration.
 ```mermaid
 graph TB
     subgraph "Application Layer"
-        A[FastAPI App<br/>WMS Model API] --> B[/metrics endpoint]
-        B --> C[prometheus_client<br/>Python library]
+        A["FastAPI App<br/>WMS Model API"] --> B["metrics endpoint<br/>/metrics"]
+        B --> C["prometheus_client<br/>Python library"]
     end
 
     subgraph "Metrics"
