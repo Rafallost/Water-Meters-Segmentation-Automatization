@@ -9,7 +9,10 @@ on:
       - 'devops/helm/**'         # Helm chart changes
       - 'infrastructure/helm-values.yaml'  # Deployment config
       - 'requirements.txt'       # Python dependencies
+      - 'WMS/data/training/**'   # Training data (triggers deploy of new model from MLflow)
+      - 'WMS/data/training/*.dvc'  # DVC metadata
   workflow_dispatch:  # Manual trigger
+  workflow_call:  # Can be called by other workflows
 
 jobs:
   build-and-deploy:
