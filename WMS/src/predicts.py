@@ -20,8 +20,8 @@ model = WaterMetersUNet(inChannels=3, outChannels=1).to(device)
 
 # Try production.pth (downloaded from MLflow), fallback to best.pth
 model_candidates = [
-    os.path.join(os.path.dirname(__file__), '..', 'models', 'production.pth'),
-    os.path.join(os.path.dirname(__file__), '..', 'models', 'best.pth'),
+    os.path.join(os.path.dirname(__file__), "..", "models", "production.pth"),
+    os.path.join(os.path.dirname(__file__), "..", "models", "best.pth"),
 ]
 
 modelPath = None

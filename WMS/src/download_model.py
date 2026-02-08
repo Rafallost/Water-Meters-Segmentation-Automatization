@@ -20,7 +20,7 @@ def download_production_model(
     model_name: str = "water-meter-segmentation",
     version: str = "production",
     output_path: str = "WMS/models/production.pth",
-    force: bool = False
+    force: bool = False,
 ):
     """Download Production model from MLflow registry."""
 
@@ -56,34 +56,36 @@ def download_production_model(
     except Exception as e:
         print(f"[ERROR] Failed to download model from MLflow: {e}")
         print(f"\nTroubleshooting:")
-        print(f"  1. Is EC2 running? Start with: gh workflow run ec2-control.yaml -f action=start")
+        print(
+            f"  1. Is EC2 running? Start with: gh workflow run ec2-control.yaml -f action=start"
+        )
         print(f"  2. Is MLflow accessible? Check: curl {mlflow_uri}/health")
         print(f"  3. Does Production model exist? Check MLflow UI: {mlflow_uri}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Download Production model from MLflow")
+    parser = argparse.ArgumentParser(
+        description="Download Production model from MLflow"
+    )
     parser.add_argument(
         "--mlflow-uri",
         default=os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"),
-        help="MLflow tracking URI (default: http://localhost:5000 or MLFLOW_TRACKING_URI env var)"
+        help="MLflow tracking URI (default: http://localhost:5000 or MLFLOW_TRACKING_URI env var)",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force re-download even if model is cached locally"
+        help="Force re-download even if model is cached locally",
     )
     parser.add_argument(
         "--output",
         default="WMS/models/production.pth",
-        help="Output path for downloaded model (default: WMS/models/production.pth)"
+        help="Output path for downloaded model (default: WMS/models/production.pth)",
     )
 
     args = parser.parse_args()
 
     download_production_model(
-        mlflow_uri=args.mlflow_uri,
-        output_path=args.output,
-        force=args.force
+        mlflow_uri=args.mlflow_uri, output_path=args.output, force=args.force
     )

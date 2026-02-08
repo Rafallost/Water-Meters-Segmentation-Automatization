@@ -268,6 +268,16 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MLflow dependencies
+        run: |
+          pip install --upgrade pip
+          pip install mlflow boto3
+
       - name: Download all results
         uses: actions/download-artifact@v4
         with:
