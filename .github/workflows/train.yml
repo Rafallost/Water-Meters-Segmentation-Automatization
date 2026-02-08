@@ -22,6 +22,11 @@ permissions:
   issues: write
   pull-requests: write
 
+# Prevent concurrent training workflows from racing over shared EC2 instance
+concurrency:
+  group: training-${{ github.ref }}
+  cancel-in-progress: false  # Queue instead of cancel - preserve all training attempts
+
 jobs:
   # Data Quality Assurance - validate before training
   data-qa:

@@ -235,5 +235,97 @@ sudo journalctl -u mlflow -f
 
 ---
 
+## Race Condition: Concurrent Training Workflows Sharing EC2 Instance
+
+**Status:** Fixed
+
+**Issue:**
+When multiple training workflows run concurrently (e.g., triggered by multiple data uploads), they all share the same EC2 instance. When the first workflow completes, it stops the EC2 instance in the `stop-infra` job, causing all other running workflows to fail with connection timeouts.
+
+**Observed behavior:**
+```
+Run #1: Data QA → Start EC2 → Train → Stop EC2 ✅ (terminates instance)
+Run #2: Data QA → Start EC2 → Train → 💥 Connection timeout (EC2 deleted by Run #1)
+Run #3: Data QA → Start EC2 → Train → 💥 Connection timeout (EC2 deleted by Run #1)
+```
+
+**Root cause:**
+- Multiple workflow runs execute in parallel without coordination
+- Each workflow assumes it has exclusive access to EC2
+- `stop-infra` job runs independently per workflow
+- First workflow to finish stops the shared EC2 instance
+- Remaining workflows fail when they try to connect to deleted instance
+
+**Impact:**
+- Training failures for all but the first completed workflow
+- Wasted compute resources (Data QA, EC2 startup)
+- Confusing error messages (MLflow connection timeout instead of clear "EC2 deleted" error)
+
+**Fix:**
+Added GitHub Actions concurrency control to `.github/workflows/train.yml`:
+
+```yaml
+concurrency:
+  group: training-${{ github.ref }}
+  cancel-in-progress: false  # Queue instead of cancel
+```
+
+**How it works:**
+- Only **one training workflow** per branch can run at a time
+- Subsequent triggers are **queued** (not canceled) and wait for previous run to complete
+- Each workflow gets exclusive access to EC2 for its entire lifecycle
+- No race conditions - EC2 is always available when workflow needs it
+- Sequential execution: Run #1 completes → Run #2 starts → Run #3 starts
+
+**Example with fix:**
+```
+15:00 - Push #1 triggers training → Run #1 starts immediately
+15:02 - Push #2 triggers training → Run #2 queued (waiting for Run #1)
+15:05 - Push #3 triggers training → Run #3 queued (waiting for Run #2)
+
+15:45 - Run #1: Train → Stop EC2 → Done ✅
+15:45 - Run #2: Start EC2 → Train → Stop EC2 → Done ✅ (45 min later)
+16:30 - Run #3: Start EC2 → Train → Stop EC2 → Done ✅ (45 min later)
+```
+
+**Why `cancel-in-progress: false`:**
+- We want to **preserve all training attempts** (each might use different data/seeds)
+- Canceling would lose potentially valuable training runs
+- Queueing ensures all data uploads get trained and evaluated
+- Small delay (waiting in queue) is acceptable vs. losing training attempts
+
+**Alternative solutions considered:**
+1. **Separate EC2 per workflow** - Too expensive (3x cost, exceeds $50 budget)
+2. **Shared EC2 with reference counting** - Complex, prone to edge cases, hard to debug
+3. **Manual EC2 control only** - Requires discipline, error-prone, defeats automation purpose
+
+**Verification:**
+```bash
+# Trigger multiple training runs quickly
+git commit --allow-empty -m "test 1" && git push
+git commit --allow-empty -m "test 2" && git push
+git commit --allow-empty -m "test 3" && git push
+
+# Check GitHub Actions - should see:
+# - Run #1: Running
+# - Run #2: Queued
+# - Run #3: Queued
+
+# After Run #1 completes, Run #2 should start automatically
+```
+
+**Related issues:**
+- MLflow timeout issues (KNOWN_ISSUES.md) - exacerbated by EC2 being deleted mid-training
+- GitHub Actions bot PR triggering (KNOWN_ISSUES.md) - can cause multiple rapid workflow starts
+
+**References:**
+- [GitHub Actions Concurrency Documentation](https://docs.github.com/en/actions/using-jobs/using-concurrency)
+- [Concurrency Groups Best Practices](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#concurrency)
+
+**Date discovered:** 2026-02-08
+**Date fixed:** 2026-02-08
+
+---
+
 ## End of known issues
 
