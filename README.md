@@ -141,18 +141,25 @@ python WMS/src/predicts.py
 ### Check Model Metrics
 
 ```bash
-# Show Production model performance
+# Quick view (no EC2 needed!)
+cat WMS/models/production_current.json
+
+# Or detailed view (requires EC2)
 python WMS/scripts/show_metrics.py
 
 # Show all model versions and their metrics
 python WMS/scripts/show_metrics.py --all
+
+# View metrics history
+cat WMS/models/production_history.jsonl
 ```
 
 **Output:**
 - Dice score, IoU, Loss metrics
 - Training parameters (LR, batch size, epochs)
 - Quality assessment (Excellent/Good/Mediocre/Poor)
-- All 14 versions with timestamps
+- All versions with timestamps
+- **NEW:** Metrics tracked in Git (no EC2 needed!)
 
 ### Manage Model Versions
 
@@ -196,6 +203,7 @@ python WMS/scripts/sync_model_aws.py --no-stop
 | **[DIAGRAMS.md](docs/DIAGRAMS.md)** | 🎨 Visual system diagrams (10 Mermaid charts) | Visual learners, thesis |
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | System design & components | Deep dive |
 | **[MONITORING.md](docs/MONITORING.md)** | Prometheus + Grafana setup | Observability & testing |
+| **[CREDENTIALS.md](docs/CREDENTIALS.md)** | 🔐 AWS credentials management | Local development setup |
 | **[BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)** | GitHub setup guide | One-time setup |
 
 **For Developers:**
