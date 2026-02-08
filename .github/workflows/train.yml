@@ -22,6 +22,11 @@ permissions:
   issues: write
   pull-requests: write
 
+# Prevent concurrent training workflows from racing over shared EC2 instance
+concurrency:
+  group: training-${{ github.ref }}
+  cancel-in-progress: false  # Queue instead of cancel - preserve all training attempts
+
 jobs:
   # Data Quality Assurance - validate before training
   data-qa:
@@ -124,6 +129,42 @@ jobs:
           fi
 
           echo "✅ Data QA passed!"
+
+      - name: Wait for MLflow server to stabilize from previous runs
+        if: matrix.attempt == 1  # Only on first attempt
+        run: |
+          echo "⏳ Waiting 120 seconds for MLflow server to stabilize from previous workflow runs..."
+          echo "This ensures any leftover connections/locks are cleared."
+          sleep 120
+
+      - name: Wait for MLflow server to be ready
+        run: |
+          MLFLOW_URL="${{ needs.start-infra.outputs.mlflow_url }}"
+          echo "⏳ Checking MLflow server health at $MLFLOW_URL"
+
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -sf "$MLFLOW_URL/health" > /dev/null 2>&1; then
+              echo "✅ MLflow server is ready!"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - MLflow not ready yet, waiting 10s..."
+            sleep 10
+          done
+
+          echo "❌ MLflow server did not become ready in time (5 minutes)"
+          echo "This might indicate server overload from previous runs."
+          exit 1
+
+      - name: Wait for MLflow server to stabilize
+        if: matrix.attempt > 1
+        run: |
+          echo "⏳ Waiting 60 seconds for MLflow server to recover from previous attempt..."
+          sleep 60
 
       - name: Train model (Attempt ${{ matrix.attempt }})
         env:
