@@ -449,11 +449,30 @@ jobs:
       - name: Commit Production metrics to repo
         if: steps.aggregate.outputs.any_improved == 'true'
         run: |
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch latest changes from remote
+          git fetch origin "$BRANCH"
+
+          # Stash our metrics changes
           git add WMS/models/production_current.json WMS/models/production_history.jsonl
-          git commit -m "chore: update Production model metrics (v${{ steps.aggregate.outputs.best_attempt }})" || echo "No changes to commit"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git stash push -m "metrics update"
+
+          # Switch to latest version of branch
+          git checkout "$BRANCH"
+          git pull origin "$BRANCH"
+
+          # Re-apply our metrics changes
+          git stash pop
+
+          # Commit and push
+          git add WMS/models/production_current.json WMS/models/production_history.jsonl
+          git commit -m "chore: update Production model metrics (v${{ steps.aggregate.outputs.best_attempt }})"
+          git push origin "$BRANCH"
 
       - name: Comment on PR with all results
         if: github.event_name == 'pull_request'

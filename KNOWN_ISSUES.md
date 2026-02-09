@@ -330,5 +330,117 @@ git commit --allow-empty -m "test 3" && git push
 
 ---
 
+## Training Workflow: Git Push Conflict When Remote Branch Diverges
+
+**Status:** Fixed
+
+**Issue:**
+Training workflow fails on the final git push step when the remote branch has new commits that were pushed during training. This happens because:
+
+1. Workflow checks out branch at start (e.g., commit A)
+2. Training runs for 45+ minutes
+3. Developer pushes new commits during training (e.g., commit B)
+4. Workflow tries to push metrics update from commit A → rejected (remote is now at commit B)
+
+**Symptoms:**
+```
+[detached HEAD 61c0a95] chore: update Production model metrics (v3)
+ 2 files changed, 32 insertions(+), 8 deletions(-)
+To https://github.com/Rafallost/Water-Meters-Segmentation-Autimatization
+ ! [rejected]        HEAD -> data/training-20260208 (fetch first)
+error: failed to push some refs
+hint: Updates were rejected because the remote contains work that you do not
+hint: have locally.
+Error: Process completed with exit code 1.
+```
+
+**Root cause:**
+- Long-running training job (40-50 minutes)
+- No synchronization between workflow start and end
+- Direct `git push` without checking for remote updates
+- Metrics commit is created from stale branch HEAD
+
+**Impact:**
+- Training succeeds, but metrics update fails
+- Production model tracking files not updated
+- Workflow marked as failed even though training worked
+- Manual intervention required to push metrics
+
+**Fix:**
+Modified `.github/workflows/train.yml` to fetch and sync with remote before pushing:
+
+```yaml
+- name: Commit Production metrics to repo
+  if: steps.aggregate.outputs.any_improved == 'true'
+  run: |
+    BRANCH="${{ github.head_ref || github.ref_name }}"
+
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+
+    # Fetch latest changes from remote
+    git fetch origin "$BRANCH"
+
+    # Stash our metrics changes
+    git add WMS/models/production_current.json WMS/models/production_history.jsonl
+    git diff --cached --quiet && echo "No changes to commit" && exit 0
+    git stash push -m "metrics update"
+
+    # Switch to latest version of branch
+    git checkout "$BRANCH"
+    git pull origin "$BRANCH"
+
+    # Re-apply our metrics changes
+    git stash pop
+
+    # Commit and push
+    git add WMS/models/production_current.json WMS/models/production_history.jsonl
+    git commit -m "chore: update Production model metrics (v${{ steps.aggregate.outputs.best_attempt }})"
+    git push origin "$BRANCH"
+```
+
+**How it works:**
+1. **Fetch** latest remote changes
+2. **Stash** our metrics file updates
+3. **Checkout** and pull the latest branch version
+4. **Pop** stash to re-apply metrics updates on top of latest code
+5. **Commit** and push (now in sync with remote)
+
+**Why stash instead of rebase:**
+- Metrics files (`production_current.json`, `production_history.jsonl`) are independent
+- No code conflicts possible - only data files updated
+- Stash + pop is simpler than rebase conflict resolution
+- Idempotent operation - can safely re-apply on any commit
+
+**Edge cases handled:**
+- **No changes**: Exit early if metrics files unchanged (e.g., all attempts failed)
+- **Stash conflicts**: Highly unlikely (only 2 JSON files, workflow-exclusive access)
+- **Multiple workflows**: Concurrency control prevents this (see "Race Condition" issue)
+
+**Testing:**
+```bash
+# Simulate the scenario locally:
+git checkout data/training-20260208
+# (let workflow start training)
+# Push a fix during training:
+git commit -m "fix: something"
+git push
+# (workflow will fetch, sync, and push metrics on top)
+```
+
+**Related issues:**
+- Race Condition: Concurrent Training Workflows (KNOWN_ISSUES.md) - prevents multiple workflows competing
+- S3 Upload Restrictions (KNOWN_ISSUES.md) - another push-time failure mode
+
+**References:**
+- [Git Stash Documentation](https://git-scm.com/docs/git-stash)
+- [GitHub Actions Checkout Action](https://github.com/actions/checkout)
+- Related workflow: [Run #21805555852](https://github.com/Rafallost/Water-Meters-Segmentation-Autimatization/actions/runs/21805555852)
+
+**Date discovered:** 2026-02-08
+**Date fixed:** 2026-02-08
+
+---
+
 ## End of known issues
 

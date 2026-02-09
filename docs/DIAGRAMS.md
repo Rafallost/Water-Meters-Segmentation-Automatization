@@ -235,7 +235,7 @@ graph TB
     style A1 fill:#d4edda,stroke:#2e7d32,color:#000
     style B1 fill:#cff4fc,stroke:#055160,color:#000
     style C1 fill:#fff3cd,stroke:#664d03,color:#000
-    style D1 fill:#ffe5b4,stroke:#b45309,color:#000
+    style D1 fill:#FFA500
 ```
 
 ---
