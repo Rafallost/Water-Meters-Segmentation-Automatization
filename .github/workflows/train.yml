@@ -209,9 +209,18 @@ jobs:
               if runs:
                   run = runs[0]
                   metrics = run.data.metrics
-                  # Use final test metrics from best.pth (not last epoch validation metrics)
-                  current_dice = metrics.get('final_test_dice', 0)
-                  current_iou = metrics.get('final_test_iou', 0)
+
+                  # Use final test metrics with fallback to older metric names
+                  current_dice = (
+                      metrics.get('final_test_dice') or  # New: from best.pth final evaluation
+                      metrics.get('test_dice') or        # Fallback: from training loop
+                      metrics.get('val_dice', 0)         # Legacy: validation metrics
+                  )
+                  current_iou = (
+                      metrics.get('final_test_iou') or
+                      metrics.get('test_iou') or
+                      metrics.get('val_iou', 0)
+                  )
 
                   # Get baseline from current Production model (if exists)
                   try:
@@ -221,9 +230,20 @@ jobs:
                           prod_version = prod_versions[0]
                           # Get the run that created this model version
                           prod_run = client.get_run(prod_version.run_id)
-                          # Use final test metrics from best.pth (not validation metrics)
-                          baseline_dice = prod_run.data.metrics.get('final_test_dice', 0)
-                          baseline_iou = prod_run.data.metrics.get('final_test_iou', 0)
+
+                          # Use final test metrics with fallback to older metric names
+                          # (for backward compatibility with models trained before final_test_dice was added)
+                          metrics = prod_run.data.metrics
+                          baseline_dice = (
+                              metrics.get('final_test_dice') or  # New: from best.pth final evaluation
+                              metrics.get('test_dice') or        # Fallback: from training loop
+                              metrics.get('val_dice', 0)         # Legacy: validation metrics
+                          )
+                          baseline_iou = (
+                              metrics.get('final_test_iou') or
+                              metrics.get('test_iou') or
+                              metrics.get('val_iou', 0)
+                          )
                           print(f"Using Production model baseline: Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
                       else:
                           # No Production model yet - use first-run baseline (very permissive)
