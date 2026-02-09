@@ -223,8 +223,8 @@ python WMS/scripts/sync_model_aws.py --no-stop
 
 ```
 User → Upload Data → Data QA → Training (EC2 auto-start)
-  → Quality Gate → Model Promotion → EC2 auto-stop
-  → Merge PR → Deploy (future)
+  → Quality Gate → Model Promotion → Deploy to k3s
+  → EC2 auto-stop → Merge PR
 ```
 
 ### Key Features
@@ -305,7 +305,8 @@ Output: 512×512 binary mask (meter region)
 | **IaC** | Terraform |
 | **Container Orchestration** | k3s (lightweight Kubernetes) |
 | **CI/CD** | GitHub Actions |
-| **Deployment** | Helm (future) |
+| **Deployment** | Helm + Docker + ECR |
+| **Monitoring** | Prometheus + Grafana |
 
 ---
 
@@ -343,10 +344,11 @@ graph TD
     G --> H
     H -->|Improved| I[Promote to Production]
     H -->|Not Improved| J[Reject PR]
-    I --> K[Auto-Approve PR]
-    K --> L[User: Merge PR]
-    H --> M[Stop EC2]
-    J --> M
+    I --> K[Build Docker & Deploy to k3s]
+    K --> L[Stop EC2]
+    J --> L
+    L --> M[Auto-Approve PR]
+    M --> N[User: Merge PR]
 ```
 
 ---
@@ -358,12 +360,12 @@ graph TD
 | Phase 1: Data Foundation | ✅ Complete | DVC, data QA scripts |
 | Phase 2: Core Scripts | ✅ Complete | Validation, quality gates |
 | Phase 3: GitHub Workflows | ✅ Complete | All pipelines implemented |
-| Phase 4: Infrastructure | ✅ Complete | Terraform, EC2, MLflow |
+| Phase 4: Infrastructure | ✅ Complete | Terraform, EC2, MLflow, k3s |
 | Phase 5: Training Pipeline | ✅ Complete | Ephemeral training with quality gates |
-| Phase 6: Deployment | 🚧 In Progress | Docker + k3s deployment |
+| Phase 6: Deployment | ✅ Complete | Docker + ECR + k3s + Helm |
 | Phase 7: Documentation | ✅ Complete | Comprehensive docs |
-| Phase 8: Monitoring | 📅 Planned | Prometheus + Grafana |
-| Phase 9: Thesis Writing | 📅 Planned | Academic documentation |
+| Phase 8: Monitoring | ✅ Complete | Prometheus + Grafana + ServiceMonitor |
+| Phase 9: Thesis Writing | 🚧 In Progress | Comparative analysis & documentation |
 
 ---
 
@@ -398,12 +400,17 @@ terraform apply
 # 4. Configure GitHub Secrets
 # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
 
-# 5. Install pre-push hook (optional)
+# 5. Setup GitHub Actions Self-Hosted Runner (for deployment)
+# SSH to EC2 and follow: devops/RUNNER_SETUP.md
+# This is REQUIRED for automated deployment to k3s
+
+# 6. Install pre-push hook (optional)
 cp devops/hooks/pre-push .git/hooks/
 chmod +x .git/hooks/pre-push
 ```
 
 👉 **[Detailed setup guide](docs/SETUP.md)** _(TODO)_
+👉 **[Self-hosted runner setup](devops/RUNNER_SETUP.md)** (required for deployment)
 
 ---
 

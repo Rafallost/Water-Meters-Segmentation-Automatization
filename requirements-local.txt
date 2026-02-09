@@ -1,0 +1,8 @@
+# Local development - DVC fix for Python 3.14 compatibility
+# Use this for local data uploads ONLY
+# DO NOT use in CI/CD or Docker
+
+# Install: pip install -r requirements-local.txt
+
+dvc[s3]==3.55.2
+pathspec==0.11.2

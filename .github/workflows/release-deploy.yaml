@@ -4,18 +4,81 @@ on:
   push:
     branches: [main]
     paths:
-      - 'WMS/src/serve/**'      # Kod aplikacji serwisowej
+      - 'WMS/src/serve/**'      # Serving application code
       - 'docker/**'              # Dockerfile changes
       - 'devops/helm/**'         # Helm chart changes
       - 'infrastructure/helm-values.yaml'  # Deployment config
       - 'requirements.txt'       # Python dependencies
-      - 'WMS/data/training/**'   # Training data (triggers deploy of new model from MLflow)
-      - 'WMS/data/training/*.dvc'  # DVC metadata
+      - 'WMS/models/production_current.json'  # New model promoted to Production
   workflow_dispatch:  # Manual trigger
-  workflow_call:  # Can be called by other workflows
+
+permissions:
+  contents: read
 
 jobs:
+  # Start EC2 for deployment (runs on GitHub-hosted runner)
+  start-infra:
+    name: Start EC2 Infrastructure
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.start.outputs.instance_id }}
+      public_ip: ${{ steps.start.outputs.public_ip }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Start EC2 instance
+        id: start
+        run: |
+          echo "Starting EC2 instance for deployment..."
+
+          # Find stopped instance
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=wms-project-k3s" \
+                     "Name=instance-state-name,Values=stopped,running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+
+          if [ "$INSTANCE_ID" == "None" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "ERROR: No EC2 instance found!"
+            exit 1
+          fi
+
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+          # Start if stopped
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].State.Name" \
+            --output text)
+
+          if [ "$STATE" == "stopped" ]; then
+            echo "Starting instance $INSTANCE_ID..."
+            aws ec2 start-instances --instance-ids $INSTANCE_ID
+            aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+            echo "Instance started successfully"
+          else
+            echo "Instance already running"
+          fi
+
+          # Get public IP
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "EC2 ready at $PUBLIC_IP"
+
+  # Build and deploy (runs on self-hosted runner on EC2)
   build-and-deploy:
+    name: Build & Deploy to k3s
+    needs: [start-infra]
     runs-on: self-hosted  # Must run on EC2 for localhost access to k3s and MLflow
     steps:
       - uses: actions/checkout@v4
@@ -55,5 +118,41 @@ jobs:
         run: |
           helm upgrade --install wms-model devops/helm/ml-model/ \
             -f infrastructure/helm-values.yaml \
-            --namespace model-$(git rev-parse --short HEAD) \
+            --namespace default \
             --create-namespace
+
+      - name: Verify Deployment
+        run: |
+          echo "Waiting for pod to be ready..."
+          kubectl wait --for=condition=ready pod \
+            -l app=wms-model \
+            --timeout=300s
+
+          echo "Testing health endpoint..."
+          kubectl exec -l app=wms-model -- curl -f http://localhost:8000/health
+
+          echo "✅ Deployment verified successfully"
+
+  # Stop EC2 after deployment (runs on GitHub-hosted runner)
+  stop-infra:
+    name: Stop EC2 Infrastructure
+    needs: [start-infra, build-and-deploy]
+    if: always()  # Stop even if deployment fails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Stop EC2 instance
+        run: |
+          INSTANCE_ID="${{ needs.start-infra.outputs.instance_id }}"
+
+          echo "Stopping EC2 instance $INSTANCE_ID..."
+          aws ec2 stop-instances --instance-ids $INSTANCE_ID
+
+          echo "✅ EC2 instance stopped (cost optimization)"

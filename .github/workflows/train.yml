@@ -13,9 +13,9 @@ on:
   workflow_dispatch:  # Allow manual trigger
     inputs:
       attempts:
-        description: 'Number of training attempts'
+        description: 'Number of training attempts (1 for testing, 3 for production)'
         required: false
-        default: '3'
+        default: '1'
 
 permissions:
   contents: write  # For auto-merge
@@ -83,7 +83,7 @@ jobs:
       max-parallel: 1  # Run attempts sequentially
       fail-fast: false  # Don't stop on first failure
       matrix:
-        attempt: [1, 2, 3]
+        attempt: [1]  # Single attempt for faster testing (change to [1, 2, 3] for production)
 
     steps:
       - name: Checkout code
@@ -173,7 +173,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5  # Retry 5 times on failure
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          echo "=== Training Attempt ${{ matrix.attempt }}/3 ==="
+          echo "=== Training Attempt ${{ matrix.attempt }} ==="
           echo "MLflow URL: $MLFLOW_TRACKING_URI"
           cd WMS/src
           # Use combination of run_number and attempt for unique seed
@@ -562,7 +562,7 @@ jobs:
         if: steps.aggregate.outputs.any_improved != 'true'
         run: |
           echo "❌ No training attempt improved the model!"
-          echo "All 3 attempts completed but none exceeded the baseline metrics."
+          echo "Training completed but metrics did not exceed the baseline."
           echo ""
           echo "Options:"
           echo "1. Review training logs for issues"
