@@ -56,8 +56,10 @@ readinessProbe:
   timeoutSeconds: 5
   failureThreshold: 3
 
-# Prometheus service monitor (disabled until Prometheus is deployed)
+# Prometheus service monitor
+# IMPORTANT: Set enabled: true if install_monitoring=true in terraform.tfvars
+# This allows Prometheus to scrape metrics from /metrics endpoint
 serviceMonitor:
-  enabled: false
+  enabled: false  # Change to true when monitoring is enabled
   interval: 30s
   path: /metrics
