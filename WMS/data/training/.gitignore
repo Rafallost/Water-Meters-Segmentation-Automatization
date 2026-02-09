@@ -1,4 +1,0 @@
-# Images and masks are now tracked in git for pipeline testing
-# (DVC approach was causing issues, pivoted to direct git storage)
-# /images
-# /masks
