@@ -102,6 +102,7 @@ python WMS/src/predicts.py
 - Auto-approval if model improves
 
 👉 **[Full usage guide](docs/USAGE.md)**
+👉 **[Data management guide](devops/DATA_MANAGEMENT.md)** - DVC, S3, and automated workflows
 
 ---
 
@@ -208,6 +209,7 @@ python WMS/scripts/sync_model_aws.py --no-stop
 
 **For Developers:**
 - [Implementation Plan](devops/PLAN.md) - Development phases
+- [Data Management Guide](devops/DATA_MANAGEMENT.md) - DVC, S3, automated workflows
 - [Terraform Docs](devops/terraform/README.md) - Infrastructure
 - [Tests Guide](WMS/tests/README.md) - Unit tests
 - [Scripts README](WMS/scripts/README.md) - Model management tools
