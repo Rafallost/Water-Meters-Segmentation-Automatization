@@ -466,25 +466,22 @@ graph TD
 git clone --recurse-submodules https://github.com/Rafallost/Water-Meters-Segmentation-Autimatization.git
 cd Water-Meters-Segmentation-Autimatization
 
-# 2. Configure AWS credentials
+# 2. Install pre-push hook (for automatic data branch creation)
+./devops/scripts/install-git-hooks.sh
+
+# 3. Configure GitHub Secrets (for CI/CD workflows)
+# Go to: Settings → Secrets and variables → Actions
+# Add: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+
+# 4. (Optional) For manual deployment/testing only:
+# Configure AWS credentials locally
 aws configure
 # Or for AWS Academy: Update ~/.aws/credentials with session credentials
 
-# 3. Deploy infrastructure
+# 5. (Optional) Deploy infrastructure for testing
 cd devops/terraform
 terraform init
 terraform apply
-
-# 4. Configure GitHub Secrets
-# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
-
-# 5. Setup GitHub Actions Self-Hosted Runner (for deployment)
-# SSH to EC2 and follow: devops/RUNNER_SETUP.md
-# This is REQUIRED for automated deployment to k3s
-
-# 6. Install pre-push hook (optional)
-cp devops/hooks/pre-push .git/hooks/
-chmod +x .git/hooks/pre-push
 ```
 
 👉 **[Detailed setup guide](docs/SETUP.md)** _(TODO)_
@@ -530,9 +527,10 @@ Access MLflow UI: `http://<EC2_IP>:5000` (when EC2 is running)
 - Check if new data is sufficient/correct
 - Review training logs in GitHub Actions
 
-**"AWS credentials expired"**
+**"AWS credentials expired" (in GitHub Actions)**
 - AWS Academy credentials expire every 4 hours
-- Update `~/.aws/credentials` and GitHub Secrets
+- Update GitHub Secrets: Settings → Secrets → Actions
+- **No local AWS credentials needed** for data uploads!
 
 **"EC2 costs too high"**
 - Ensure ephemeral infrastructure is working

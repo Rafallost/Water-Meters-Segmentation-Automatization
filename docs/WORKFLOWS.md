@@ -17,19 +17,20 @@ This document explains **all GitHub Actions workflows** in this project and when
                  │
                  ▼ (git commit + git push origin main)
 ┌─────────────────────────────────────────────────────────────┐
-│  PRE-PUSH HOOK (local git hook)                             │
-│     • Downloads existing data from S3 via DVC               │
-│     • Merges: existing + new = complete dataset             │
+│  PRE-PUSH HOOK (local git hook - NO AWS CREDENTIALS!)      │
+│     • Detects new training data                             │
 │     • Creates branch: data/YYYYMMDD-HHMMSS                  │
-│     • Pushes merged dataset to branch                       │
+│     • Pushes NEW files to branch                            │
 │     • Blocks push to main                                   │
 └────────────────┬────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  1. DATA VALIDATION (training-data-pipeline.yaml)           │
-│     • Validates image/mask pairs                            │
-│     • Checks resolutions and binary masks                   │
+│  1. DATA MERGING & VALIDATION (training-data-pipeline.yaml) │
+│     • Downloads existing dataset from S3 (GitHub Actions)   │
+│     • Merges: existing S3 data + new data                   │
+│     • Validates merged dataset (pairs, resolutions, masks)  │
+│     • Updates DVC tracking with merged dataset              │
 │     • Creates Pull Request to main                          │
 │     → PASS: PR created   → FAIL: Comment on commit          │
 └────────────────┬────────────────────────────────────────────┘
@@ -75,99 +76,98 @@ This document explains **all GitHub Actions workflows** in this project and when
 
 **Type:** Local Git hook (not a GitHub Action)
 **Triggers:** When you run `git push origin main` with training data changes
-**Duration:** ~2-5 minutes (depends on S3 download size)
+**Duration:** ~5-10 seconds (fast - no S3 download!)
 
 **What it does:**
 1. Detects raw image/mask files in `WMS/data/training/`
-2. Verifies AWS credentials are configured
-3. Downloads existing dataset from S3 using DVC (if `.dvc` files exist)
-4. Merges existing data + new data = complete dataset
-5. Creates timestamped branch: `data/YYYYMMDD-HHMMSS`
-6. Commits merged dataset to branch
-7. Pushes branch to GitHub
-8. **Blocks** push to main (exits with error)
+2. Creates timestamped branch: `data/YYYYMMDD-HHMMSS`
+3. Commits **new files only** to branch
+4. Pushes branch to GitHub
+5. **Blocks** push to main (exits with error)
+
+**Note:** Data merging happens in GitHub Actions (no local AWS credentials needed!)
 
 **Example output:**
 ```
 🔍 Checking for training data changes...
-📦 Raw training data detected - Starting merge process
-
-Detected 2 new file(s):
-  WMS/data/training/images/id_49_image.jpg
-  WMS/data/training/masks/id_49_mask.png
-
-🔐 Verifying AWS credentials...
-✅ AWS credentials valid
-
-📥 Downloading existing dataset from S3...
-✅ Downloaded 48 existing images
-
-📦 Merging datasets...
-  • Existing images: 48
-  • New images: 2
-  • Total: 50 images
-
-🌿 Creating data branch: data/20260210-123456
-✅ Merged dataset ready: 50 images
-🚀 Pushing to remote branch: data/20260210-123456
-
 ╔════════════════════════════════════════════════════════════╗
-║  ✅ SUCCESS - Data merged and pushed to branch             ║
+║  🔍 Raw training data detected                             ║
 ╚════════════════════════════════════════════════════════════╝
 
-What happened:
-  ✓ Downloaded 48 existing images from S3
-  ✓ Merged with 2 new images
-  ✓ Total dataset: 50 images
-  ✓ Pushed to branch: data/20260210-123456
+📦 New files detected:
+   • Images: 2
+   • Masks: 2
 
-Next steps:
-  1. GitHub Actions will validate the merged dataset
-  2. Pull Request will be created automatically
-  3. Training pipeline will run on the full dataset
-  4. Quality gate compares new model vs baseline
-  5. If improved, PR auto-approved and merged
+Detected files:
+  • WMS/data/training/images/id_49_image.jpg
+  • WMS/data/training/masks/id_49_mask.png
+
+🌿 Creating data branch: data/20260210-123456
+💾 Committing new training data...
+🚀 Pushing to remote: data/20260210-123456
+
+╔════════════════════════════════════════════════════════════╗
+║  ✅ SUCCESS - New data pushed to branch                    ║
+╚════════════════════════════════════════════════════════════╝
+
+What happens next:
+  1. GitHub Actions will download existing data from S3
+  2. Merge: existing S3 data + your new data = complete dataset
+  3. Validate merged dataset (resolution, pairs, masks)
+  4. Create Pull Request with merged dataset
+  5. Training pipeline will run automatically
+
+Branch: data/20260210-123456
+Track: https://github.com/Rafallost/.../actions
+
+ℹ️  No AWS credentials needed - merging happens in GitHub Actions!
 ```
 
 **Why this approach:**
 - ✅ Every training run uses **complete historical data** (not just new samples)
-- ✅ Automatic merging - user doesn't manually manage DVC
+- ✅ Automatic merging in GitHub Actions (no local AWS setup!)
 - ✅ S3 is single source of truth for training data
 - ✅ Raw files never reach main branch
+- ✅ Fast hook execution (<10 seconds)
 
 **Prerequisites:**
-- DVC installed locally
-- AWS credentials configured (`~/.aws/credentials` or env vars)
 - Pre-push hook installed (run `./devops/scripts/install-git-hooks.sh`)
+- **No AWS credentials needed locally!** (merging happens in CI)
 
 ---
 
 ### 2. **Training Data Pipeline** (`training-data-pipeline.yaml`)
 
-**Purpose:** Validate data and create PR
+**Purpose:** Merge data from S3, validate, and create PR
 **Triggers:** When you push to `data/*` branches (created by pre-push hook)
-**Duration:** ~30-45 seconds
+**Duration:** ~1-3 minutes (depends on S3 dataset size)
 
 **What it does:**
-1. Runs data QA validation
+1. **Downloads existing dataset from S3** (using GitHub secrets for AWS credentials)
+2. **Merges** existing S3 data + new data = complete dataset
+3. **Runs data QA validation**
    - Checks image/mask pairs match
-   - Validates resolutions
+   - Validates resolutions (512x512)
    - Ensures binary masks (0/255)
-2. Counts training data (images/masks)
-3. **If PASS:** Creates Pull Request to main with validation report
-4. **If FAIL:** Posts commit comment with errors
+4. **Updates DVC tracking** with merged dataset
+5. **Commits merged data** back to data branch
+6. **If PASS:** Creates Pull Request to main with validation report
+7. **If FAIL:** Posts commit comment with errors
 
 **PR Description includes:**
 - Validation report (image count, resolution, coverage)
-- Dataset details (existing + new = total)
+- **Dataset summary:** Existing + New = Total images
 - Quality gate rules
 - Next steps (training will run automatically)
 
 **Outcomes:**
-- ✅ PASS → PR created, training workflow triggered
+- ✅ PASS → PR created with **merged dataset**, training workflow triggered
 - ❌ FAIL → Commit comment with errors, no PR
 
-**Why you need it:** Prevents wasting compute on invalid data.
+**Why you need it:**
+- Prevents wasting compute on invalid data
+- **Data merging happens in CI** (no local AWS credentials needed)
+- Every training uses complete historical dataset
 
 ---
 
@@ -388,12 +388,13 @@ git push origin main
 
 ### Training fails with "No training data found"
 
-**Cause:** Data wasn't properly merged/pushed by pre-push hook
+**Cause:** Data wasn't properly merged in GitHub Actions
 
 **Fix:**
 1. Check that pre-push hook is installed: `ls -la .git/hooks/pre-push`
-2. Check AWS credentials: `aws sts get-caller-identity`
-3. Re-run: `git push origin main`
+2. Check GitHub Actions logs for `training-data-pipeline.yaml` workflow
+3. Verify AWS secrets are configured in GitHub (repository settings → Secrets)
+4. Re-push to trigger workflow: `git commit --allow-empty -m "retry" && git push`
 
 ### Quality gate fails: "Model did not improve"
 

@@ -1,11 +1,13 @@
 name: Training Data Pipeline
 
 # Complete pipeline for training data changes:
-# 1. Data QA validation
-# 2. Create/Update Pull Request for review and training
+# 1. Download existing dataset from S3
+# 2. Merge existing + new data
+# 3. Data QA validation on merged dataset
+# 4. Update DVC tracking
+# 5. Create/Update Pull Request for review and training
 #
-# Note: Data merging is handled by the pre-push hook locally
-# This workflow just validates and creates the PR
+# Note: Data merging moved to GitHub Actions (no local AWS credentials needed)
 
 on:
   push:
@@ -17,141 +19,209 @@ permissions:
   pull-requests: write
 
 jobs:
-  validate-and-create-pr:
+  merge-and-validate:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout data branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
           submodules: recursive
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install opencv-python numpy Pillow PyYAML
-
-      - name: Run Data QA Validation
-        id: data_qa
         run: |
-          echo "Running data quality assurance..."
+          pip install dvc[s3] pyyaml pillow boto3 opencv-python numpy
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Count new files
+        id: count_new
+        run: |
+          NEW_IMAGES=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          NEW_MASKS=$(find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          echo "new_images=$NEW_IMAGES" >> $GITHUB_OUTPUT
+          echo "new_masks=$NEW_MASKS" >> $GITHUB_OUTPUT
+          echo "📊 New files in branch: $NEW_IMAGES images, $NEW_MASKS masks"
+
+      - name: Download existing dataset from S3
+        id: download
+        run: |
+          echo "📥 Downloading existing dataset from S3..."
+
+          # Check if .dvc files exist (not first upload)
+          if [ -f "WMS/data/training/images.dvc" ]; then
+            # Create temp directory for existing data
+            mkdir -p /tmp/existing_data/images /tmp/existing_data/masks
+
+            # Pull existing data
+            dvc pull WMS/data/training/images.dvc WMS/data/training/masks.dvc || {
+              echo "⚠️  DVC pull failed - assuming first upload"
+              echo "existing_images=0" >> $GITHUB_OUTPUT
+              echo "existing_masks=0" >> $GITHUB_OUTPUT
+              exit 0
+            }
+
+            # Move existing data to temp (if directories exist and have files)
+            if [ -d "WMS/data/training/images" ] && [ "$(ls -A WMS/data/training/images 2>/dev/null)" ]; then
+              mv WMS/data/training/images/* /tmp/existing_data/images/ 2>/dev/null || true
+            fi
+            if [ -d "WMS/data/training/masks" ] && [ "$(ls -A WMS/data/training/masks 2>/dev/null)" ]; then
+              mv WMS/data/training/masks/* /tmp/existing_data/masks/ 2>/dev/null || true
+            fi
+
+            # Count existing files
+            EXISTING_IMAGES=$(find /tmp/existing_data/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+            EXISTING_MASKS=$(find /tmp/existing_data/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+            echo "existing_images=$EXISTING_IMAGES" >> $GITHUB_OUTPUT
+            echo "existing_masks=$EXISTING_MASKS" >> $GITHUB_OUTPUT
+            echo "✅ Downloaded $EXISTING_IMAGES existing images from S3"
+          else
+            echo "ℹ️  No .dvc files found - first upload"
+            echo "existing_images=0" >> $GITHUB_OUTPUT
+            echo "existing_masks=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge datasets
+        id: merge
+        run: |
+          echo "📦 Merging datasets..."
+
+          EXISTING=${{ steps.download.outputs.existing_images }}
+          NEW=${{ steps.count_new.outputs.new_images }}
+
+          # Ensure directories exist
+          mkdir -p WMS/data/training/images WMS/data/training/masks
+
+          # Merge: copy existing data back if it exists
+          if [ -d "/tmp/existing_data/images" ] && [ "$(ls -A /tmp/existing_data/images 2>/dev/null)" ]; then
+            cp -n /tmp/existing_data/images/* WMS/data/training/images/ 2>/dev/null || true
+          fi
+          if [ -d "/tmp/existing_data/masks" ] && [ "$(ls -A /tmp/existing_data/masks 2>/dev/null)" ]; then
+            cp -n /tmp/existing_data/masks/* WMS/data/training/masks/ 2>/dev/null || true
+          fi
+
+          # Count total after merge
+          TOTAL_IMAGES=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          TOTAL_MASKS=$(find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+
+          echo "  • Existing images: $EXISTING"
+          echo "  • New images: $NEW"
+          echo "  • Total: $TOTAL_IMAGES images"
+          echo ""
+
+          echo "total_images=$TOTAL_IMAGES" >> $GITHUB_OUTPUT
+          echo "total_masks=$TOTAL_MASKS" >> $GITHUB_OUTPUT
+
+      - name: Data Quality Validation
+        id: qa
+        run: |
+          echo "🔍 Validating merged dataset..."
           python devops/scripts/data-qa.py WMS/data/training/ --output report.json
 
-          # Capture exit code
-          QA_STATUS=$?
-
-          # Read report
-          REPORT=$(cat report.json)
-
-          # Set outputs
-          echo "status=$QA_STATUS" >> $GITHUB_OUTPUT
-
-          # Save report for PR comment
-          echo "$REPORT" > qa_report.json
-
-          if [ $QA_STATUS -ne 0 ]; then
-            echo "❌ Data QA failed!"
+          if [ $? -eq 0 ]; then
+            echo "✅ Data validation passed"
+            echo "validation_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Data validation failed"
+            echo "validation_passed=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          echo "✅ Data QA passed!"
-
-      - name: Count training data
-        id: count_data
+      - name: Update DVC tracking
+        if: steps.qa.outputs.validation_passed == 'true'
         run: |
-          IMAGE_COUNT=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
-          MASK_COUNT=$(find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          echo "📋 Updating DVC tracking..."
 
-          echo "image_count=$IMAGE_COUNT" >> $GITHUB_OUTPUT
-          echo "mask_count=$MASK_COUNT" >> $GITHUB_OUTPUT
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          echo "Found $IMAGE_COUNT images and $MASK_COUNT masks"
+          # Add merged dataset to DVC
+          dvc add WMS/data/training/images
+          dvc add WMS/data/training/masks
 
-      - name: Create or Update Pull Request
-        if: success()
-        uses: actions/github-script@v7
+          # Stage .dvc files and .gitignore
+          git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
+          git add WMS/data/training/.gitignore
+
+          # Commit if there are changes (using environment variables to avoid YAML escaping issues)
+          if ! git diff --staged --quiet; then
+            TOTAL_IMG="${{ steps.merge.outputs.total_images }}"
+            EXISTING_IMG="${{ steps.download.outputs.existing_images }}"
+            NEW_IMG="${{ steps.count_new.outputs.new_images }}"
+
+            git commit -m "data: update DVC metadata for merged dataset" \
+                       -m "" \
+                       -m "Total images: ${TOTAL_IMG}" \
+                       -m "- Existing: ${EXISTING_IMG}" \
+                       -m "- New: ${NEW_IMG}" \
+                       -m "" \
+                       -m "[skip ci]"
+
+            git push origin ${{ github.ref_name }}
+            echo "✅ DVC metadata updated"
+          else
+            echo "ℹ️  No DVC changes to commit"
+          fi
+
+      - name: Create Pull Request
+        if: steps.qa.outputs.validation_passed == 'true'
+        uses: peter-evans/create-pull-request@v6
         with:
-          script: |
-            const fs = require('fs');
-            const branch = context.ref.replace('refs/heads/', '');
-            const report = JSON.parse(fs.readFileSync('qa_report.json', 'utf8'));
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+          base: main
+          title: "data: add ${{ steps.count_new.outputs.new_images }} new training images (total: ${{ steps.merge.outputs.total_images }})"
+          body: |
+            ## 📊 Training Data Update
 
-            // Check if PR already exists
-            const { data: existingPRs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${branch}`,
-              base: 'main',
-              state: 'open'
-            });
+            **Merged Dataset Summary:**
+            - Existing images from S3: ${{ steps.download.outputs.existing_images }}
+            - New images in this PR: ${{ steps.count_new.outputs.new_images }}
+            - **Total dataset size: ${{ steps.merge.outputs.total_images }} images**
 
-            const prBody = `## Training Data Update - Validation PASSED ✅
+            ## ✅ Data Quality Validation
 
-            New training data has been merged and validated successfully.
+            - [x] Image/mask pairs validated
+            - [x] Image resolutions checked (512x512)
+            - [x] Binary masks validated (0/255)
+            - [x] File format checks passed
 
-            ### Validation Report
-
-            - **Images**: ${report.image_count || 'N/A'}
-            - **Masks**: ${report.mask_count || 'N/A'}
-            - **Valid pairs**: ${report.valid_pairs || 'N/A'}
-            - **Resolution**: ${report.statistics?.resolution || 'N/A'}
-            - **Median coverage**: ${report.statistics?.['median_coverage_%'] || 'N/A'}%
-
-            ### Dataset Details
-
-            This branch contains the **complete merged dataset**:
-            - Existing data from S3 (if any)
-            - New data added locally
-            - Total: ${report.image_count || 'N/A'} training images
-
-            ### Next Steps
-
-            1. ✅ Data validation completed
-            2. ⏳ Training pipeline will run automatically on this PR
-            3. 📊 Quality gate will compare against Production baseline
-            4. 🚀 If model improves, PR will be auto-approved
-            5. ✅ Merge to deploy the new model
-
-            ### Quality Gate
+            ## 🚀 Next Steps
 
             The training pipeline will:
-            - Train model on the **full dataset** (${report.image_count || 'N/A'} images)
-            - Compare metrics (Dice, IoU) against Production baseline
-            - Auto-approve if **both** metrics improve
-            - Block merge if metrics don't improve
+            1. Train U-Net model on merged dataset (${{ steps.merge.outputs.total_images }} images)
+            2. Compare metrics (Dice, IoU) against Production baseline
+            3. If improved: promote to Production and auto-merge
+            4. If not improved: block merge with detailed metrics
+
+            ## 📋 Quality Gate Rules
+
+            For this PR to be merged, the trained model must:
+            - Dice coefficient ≥ Production baseline (dynamic)
+            - IoU ≥ Production baseline (dynamic)
 
             ---
-            🤖 Generated by [GitHub Actions](${context.payload.repository.html_url}/actions/runs/${context.runId})
-            `;
+            🤖 *Merged by GitHub Actions - data pipeline*
+          labels: |
+            data-update
+            auto-train
 
-            if (existingPRs.length > 0) {
-              // Update existing PR
-              const pr = existingPRs[0];
-              await github.rest.pulls.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                body: prBody
-              });
-              console.log(`✅ Updated existing PR #${pr.number}`);
-            } else {
-              // Create new PR
-              const pr = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `Training Data Update: ${branch}`,
-                head: branch,
-                base: 'main',
-                body: prBody
-              });
-              console.log(`✅ Created PR #${pr.data.number}`);
-            }
-
-      - name: Post validation errors (if failed)
-        if: failure() && steps.data_qa.outputs.status != '0'
+      - name: Comment on commit (validation failed)
+        if: steps.qa.outputs.validation_passed == 'false'
         uses: actions/github-script@v7
         with:
           script: |
@@ -159,9 +229,9 @@ jobs:
 
             let report;
             try {
-              report = JSON.parse(fs.readFileSync('qa_report.json', 'utf8'));
+              report = JSON.parse(fs.readFileSync('report.json', 'utf8'));
             } catch (e) {
-              report = { error: 'Could not read QA report' };
+              report = { errors: ['Could not read QA report'] };
             }
 
             let errorList = '';
@@ -172,13 +242,9 @@ jobs:
               }
             }
 
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: `## Data Validation FAILED ❌
+            const errorMessage = `## ❌ Data Validation Failed
 
-            Training data validation failed. Please fix the following issues and push again.
+            The training data validation failed. Please fix the following issues and push again.
 
             ### Errors
 
@@ -198,8 +264,14 @@ jobs:
             4. This workflow will run again automatically
 
             ---
-            🤖 Generated by [GitHub Actions](${context.payload.repository.html_url}/actions/runs/${context.runId})
-            `
+            🤖 Generated by [GitHub Actions](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+            `;
+
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: errorMessage
             });
 
       - name: Workflow Summary
@@ -208,8 +280,13 @@ jobs:
           echo "## Training Data Pipeline" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ steps.data_qa.outputs.status }}" == "0" ]; then
+          if [ "${{ steps.qa.outputs.validation_passed }}" == "true" ]; then
             echo "✅ **Status**: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Dataset Summary:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Existing images: ${{ steps.download.outputs.existing_images }}" >> $GITHUB_STEP_SUMMARY
+            echo "- New images: ${{ steps.count_new.outputs.new_images }}" >> $GITHUB_STEP_SUMMARY
+            echo "- Total: ${{ steps.merge.outputs.total_images }} images" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Training data validated and PR created." >> $GITHUB_STEP_SUMMARY
             echo "Training pipeline will run automatically." >> $GITHUB_STEP_SUMMARY
