@@ -65,6 +65,23 @@ jobs:
           docker build -f docker/Dockerfile.serve -t $ECR_REPO:latest .
           docker push $ECR_REPO:latest
 
+      - name: Create ECR ImagePullSecret
+        run: |
+          # Delete old secret if exists (to update credentials)
+          kubectl delete secret ecr-secret -n default --ignore-not-found=true
+
+          # Get ECR authorization token
+          ECR_TOKEN=$(aws ecr get-login-password --region us-east-1)
+
+          # Create new secret with fresh credentials
+          kubectl create secret docker-registry ecr-secret \
+            --docker-server=055677744286.dkr.ecr.us-east-1.amazonaws.com \
+            --docker-username=AWS \
+            --docker-password="$ECR_TOKEN" \
+            --namespace=default
+
+          echo "✅ ECR imagePullSecret created/updated in default namespace"
+
       - name: Deploy via Helm
         run: |
           helm upgrade --install wms-model devops/helm/ml-model/ \
