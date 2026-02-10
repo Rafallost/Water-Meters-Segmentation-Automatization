@@ -18,6 +18,13 @@ on:
         required: false
       AWS_SESSION_TOKEN:
         required: false
+  workflow_dispatch:
+    inputs:
+      trigger_reason:
+        description: 'Deployment trigger reason'
+        type: string
+        required: false
+        default: 'manual-test'
 
 jobs:
   deploy:
