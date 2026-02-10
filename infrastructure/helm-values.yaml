@@ -31,7 +31,7 @@ env:
   - name: MODEL_PATH
     value: "/app/models/best.pth"
   - name: MLFLOW_TRACKING_URI
-    value: "http://10.0.1.8:5000"  # MLflow on EC2 host (internal IP)
+    value: "http://localhost:5000"  # MLflow on EC2 host (via hostNetwork)
   - name: MODEL_VERSION
     value: "production"
   - name: PYTHONUNBUFFERED
