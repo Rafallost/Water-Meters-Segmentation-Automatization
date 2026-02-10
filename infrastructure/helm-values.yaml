@@ -18,13 +18,13 @@ service:
   # nodePort: 30080  # Optional: can specify fixed NodePort
 
 resources:
-  # Conservative limits for t3.small instance
+  # Conservative limits for t3.large instance
   limits:
     memory: "512Mi"
     cpu: "500m"
   requests:
     memory: "256Mi"
-    cpu: "250m"
+    cpu: "100m"  # Reduced from 250m to fit on busy node
 
 # Environment variables specific to this deployment
 env:
