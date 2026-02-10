@@ -69,11 +69,11 @@ jobs:
         run: |
           echo "Waiting for pod to be ready..."
           kubectl wait --for=condition=ready pod \
-            -l app=wms-model \
+            -l app=ml-model,release=wms-model \
             --timeout=300s
 
           echo "Testing health endpoint..."
-          kubectl exec -l app=wms-model -- curl -f http://localhost:8000/health
+          kubectl exec -l app=ml-model,release=wms-model -- curl -f http://localhost:8000/health
 
           echo "✅ Deployment verified successfully"
 
