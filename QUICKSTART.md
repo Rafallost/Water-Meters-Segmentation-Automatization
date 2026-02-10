@@ -78,26 +78,17 @@ python WMS/src/predicts.py
 ### Upload New Training Data
 
 ```bash
-# 1. Install pre-push hook (one-time setup)
-./devops/scripts/install-git-hooks.sh
-
-# 2. Add your images and masks
+# Add your images and masks
 cp /path/to/new/*.jpg WMS/data/training/images/
 cp /path/to/new/*.png WMS/data/training/masks/
 
-# 3. Commit and push (hook auto-creates branch!)
+# Commit and push (hook auto-creates branch!)
 git add WMS/data/training/
 git commit -m "data: add new training samples"
 git push origin main  # Pre-push hook redirects to data/TIMESTAMP
 
-# 4. Wait ~10-15 minutes for automated pipeline:
-#    - GitHub Actions merges with S3 data (no local AWS needed!)
-#    - Validates merged dataset
-#    - Creates Pull Request
-#    - Trains model on full dataset
-#    - Auto-merges if model improved!
-
-# ℹ️  No AWS credentials required locally - all merging happens in CI!
+# Wait ~10 minutes for automated training
+# Check PR for results → Merge if model improved!
 ```
 
 ### Browse MLflow Experiments
