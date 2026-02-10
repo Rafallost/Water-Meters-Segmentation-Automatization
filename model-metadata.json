@@ -1,0 +1,16 @@
+{
+  "model_version": "initial",
+  "run_id": null,
+  "metrics": {
+    "dice": 0.0,
+    "iou": 0.0
+  },
+  "baseline": {
+    "dice": 0.0,
+    "iou": 0.0
+  },
+  "trained_at": null,
+  "training_data_count": 0,
+  "github_run": null,
+  "note": "This file will be automatically updated by the training pipeline when a model is successfully trained and promoted to Production."
+}

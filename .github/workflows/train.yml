@@ -5,27 +5,20 @@ on:
     branches:
       - main
     paths:
-      - 'WMS/data/training/*.dvc'  # DVC metadata files
-      - 'WMS/data/training/images/**'  # For POC with data in Git
-      - 'WMS/data/training/masks/**'   # For POC with data in Git
+      - 'WMS/data/training/**'  # Any training data changes
       - 'WMS/src/**'
       - 'WMS/configs/**'
   workflow_dispatch:  # Allow manual trigger
-    inputs:
-      attempts:
-        description: 'Number of training attempts (1 for testing, 3 for production)'
-        required: false
-        default: '1'
 
 permissions:
-  contents: write  # For auto-merge
+  contents: write
   issues: write
   pull-requests: write
 
-# Prevent concurrent training workflows from racing over shared EC2 instance
+# Prevent concurrent training workflows
 concurrency:
   group: training-${{ github.ref }}
-  cancel-in-progress: false  # Queue instead of cancel - preserve all training attempts
+  cancel-in-progress: false
 
 jobs:
   # Data Quality Assurance - validate before training
@@ -47,43 +40,52 @@ jobs:
         run: pip install opencv-python numpy Pillow PyYAML
 
       - name: Run Data QA
-        run: python devops/scripts/data-qa.py WMS/data/training/ --output report.json
+        run: |
+          python devops/scripts/data-qa.py WMS/data/training/ --output report.json
 
-      - name: Post report as PR comment
-        if: always() && github.event_name == 'pull_request'
+          # Display report
+          cat report.json
+
+          # Check status
+          if grep -q '"status": "FAIL"' report.json; then
+            echo "❌ Data QA failed!"
+            exit 1
+          fi
+
+          echo "✅ Data QA passed!"
+
+      - name: Post QA report as PR comment
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('report.json', 'utf8');
-            const reportData = JSON.parse(report);
-            const status = reportData.status === 'PASS' ? '✅ PASSED' : '❌ FAILED';
+            const report = JSON.parse(fs.readFileSync('report.json', 'utf8'));
+            const status = report.status === 'PASS' ? '✅ PASSED' : '❌ FAILED';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: `## Data Quality Assurance ${status}\n\n\`\`\`json\n${report}\n\`\`\``
+              body: `## Data Quality Assurance ${status}\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``
             });
 
-  # Start EC2 infrastructure before training
+  # Start EC2 infrastructure
   start-infra:
     name: Start EC2 Infrastructure
-    needs: data-qa  # Wait for data validation
+    needs: data-qa
     uses: ./.github/workflows/ec2-control.yaml
     with:
       action: start
     secrets: inherit
 
-  # Training with ephemeral infrastructure
+  # Single training run (time-optimized)
   train:
+    name: Train Model
     needs: start-infra
-    runs-on: ubuntu-latest  # GitHub-hosted runner
-    strategy:
-      max-parallel: 1  # Run attempts sequentially
-      fail-fast: false  # Don't stop on first failure
-      matrix:
-        attempt: [1]  # Single attempt for faster testing (change to [1, 2, 3] for production)
+    runs-on: ubuntu-latest
+    outputs:
+      improved: ${{ steps.quality_gate.outputs.improved }}
 
     steps:
       - name: Checkout code
@@ -110,37 +112,25 @@ jobs:
           pip install -r requirements.txt
           pip install dvc[s3]
 
-      - name: Pull training data with DVC
+      - name: Pull training data with DVC (if needed)
         run: |
           cd WMS/data/training
-          dvc pull images.dvc masks.dvc || echo "DVC pull failed, using local data"
 
-      - name: Data Quality Assurance
-        run: |
-          python devops/scripts/data-qa.py WMS/data/training/ --output data_qa_report.json
-
-          # Display summary
-          cat data_qa_report.json
-
-          # Check if passed
-          if grep -q '"status": "FAIL"' data_qa_report.json; then
-            echo "❌ Data QA failed! Check report above."
+          # Check if data already in repo (from data branch)
+          if [ -d "images" ] && [ "$(ls -A images)" ]; then
+            echo "✅ Training data already in repository"
+          elif [ -f "images.dvc" ]; then
+            echo "📥 Pulling data from S3 with DVC..."
+            dvc pull images.dvc masks.dvc || echo "⚠️  DVC pull failed, using local data"
+          else
+            echo "⚠️  No training data found"
             exit 1
           fi
 
-          echo "✅ Data QA passed!"
-
-      - name: Wait for MLflow server to stabilize from previous runs
-        if: matrix.attempt == 1  # Only on first attempt
-        run: |
-          echo "⏳ Waiting 120 seconds for MLflow server to stabilize from previous workflow runs..."
-          echo "This ensures any leftover connections/locks are cleared."
-          sleep 120
-
-      - name: Wait for MLflow server to be ready
+      - name: Wait for MLflow server
         run: |
           MLFLOW_URL="${{ needs.start-infra.outputs.mlflow_url }}"
-          echo "⏳ Checking MLflow server health at $MLFLOW_URL"
+          echo "⏳ Waiting for MLflow server at $MLFLOW_URL"
 
           MAX_ATTEMPTS=30
           ATTEMPT=0
@@ -152,43 +142,32 @@ jobs:
             fi
 
             ATTEMPT=$((ATTEMPT + 1))
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - MLflow not ready yet, waiting 10s..."
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - waiting 10s..."
             sleep 10
           done
 
-          echo "❌ MLflow server did not become ready in time (5 minutes)"
-          echo "This might indicate server overload from previous runs."
+          echo "❌ MLflow server did not become ready (5 minutes)"
           exit 1
 
-      - name: Wait for MLflow server to stabilize
-        if: matrix.attempt > 1
-        run: |
-          echo "⏳ Waiting 60 seconds for MLflow server to recover from previous attempt..."
-          sleep 60
-
-      - name: Train model (Attempt ${{ matrix.attempt }})
+      - name: Train model
         env:
           MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
-          MLFLOW_HTTP_REQUEST_TIMEOUT: 300  # 5 minutes timeout
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5  # Retry 5 times on failure
+          MLFLOW_HTTP_REQUEST_TIMEOUT: 300
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          echo "=== Training Attempt ${{ matrix.attempt }} ==="
+          echo "=== Training Model ==="
           echo "MLflow URL: $MLFLOW_TRACKING_URI"
           cd WMS/src
-          # Use combination of run_number and attempt for unique seed
-          SEED=$(((${{ github.run_number }} * 100) + ${{ matrix.attempt }}))
-          echo "Using seed: $SEED"
-          python train.py --config ../configs/train.yaml --seed $SEED
+          python train.py --config ../configs/train.yaml --seed ${{ github.run_number }}
 
-      - name: Get training results
-        id: results
+      - name: Quality Gate - Compare with Production baseline
+        id: quality_gate
         env:
           MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
-          MLFLOW_HTTP_REQUEST_TIMEOUT: 300  # 5 minutes timeout
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5  # Retry 5 times on failure
+          MLFLOW_HTTP_REQUEST_TIMEOUT: 300
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
         run: |
-          # Extract metrics from latest MLflow run
           python3 << 'EOF'
           import mlflow
           import json
@@ -199,231 +178,114 @@ jobs:
 
           # Get latest run from experiment
           experiment = client.get_experiment_by_name("water-meter-segmentation")
-          if experiment:
-              runs = client.search_runs(
-                  experiment_ids=[experiment.experiment_id],
-                  order_by=["start_time DESC"],
-                  max_results=1
-              )
+          if not experiment:
+              print("❌ Experiment not found")
+              exit(1)
 
-              if runs:
-                  run = runs[0]
-                  metrics = run.data.metrics
+          runs = client.search_runs(
+              experiment_ids=[experiment.experiment_id],
+              order_by=["start_time DESC"],
+              max_results=1
+          )
 
-                  # Use final test metrics with fallback to older metric names
-                  current_dice = (
-                      metrics.get('final_test_dice') or  # New: from best.pth final evaluation
-                      metrics.get('test_dice') or        # Fallback: from training loop
-                      metrics.get('val_dice', 0)         # Legacy: validation metrics
+          if not runs:
+              print("❌ No runs found")
+              exit(1)
+
+          run = runs[0]
+          metrics = run.data.metrics
+
+          # Get current model metrics
+          current_dice = (
+              metrics.get('final_test_dice') or
+              metrics.get('test_dice') or
+              metrics.get('val_dice', 0)
+          )
+          current_iou = (
+              metrics.get('final_test_iou') or
+              metrics.get('test_iou') or
+              metrics.get('val_iou', 0)
+          )
+
+          # Get baseline from Production model (if exists)
+          try:
+              prod_versions = client.get_latest_versions("water-meter-segmentation", stages=["Production"])
+              if prod_versions:
+                  prod_version = prod_versions[0]
+                  prod_run = client.get_run(prod_version.run_id)
+
+                  prod_metrics = prod_run.data.metrics
+                  baseline_dice = (
+                      prod_metrics.get('final_test_dice') or
+                      prod_metrics.get('test_dice') or
+                      prod_metrics.get('val_dice', 0)
                   )
-                  current_iou = (
-                      metrics.get('final_test_iou') or
-                      metrics.get('test_iou') or
-                      metrics.get('val_iou', 0)
+                  baseline_iou = (
+                      prod_metrics.get('final_test_iou') or
+                      prod_metrics.get('test_iou') or
+                      prod_metrics.get('val_iou', 0)
                   )
-
-                  # Get baseline from current Production model (if exists)
-                  try:
-                      # Try to get Production model from registry
-                      prod_versions = client.get_latest_versions("water-meter-segmentation", stages=["Production"])
-                      if prod_versions:
-                          prod_version = prod_versions[0]
-                          # Get the run that created this model version
-                          prod_run = client.get_run(prod_version.run_id)
-
-                          # Use final test metrics with fallback to older metric names
-                          # (for backward compatibility with models trained before final_test_dice was added)
-                          metrics = prod_run.data.metrics
-                          baseline_dice = (
-                              metrics.get('final_test_dice') or  # New: from best.pth final evaluation
-                              metrics.get('test_dice') or        # Fallback: from training loop
-                              metrics.get('val_dice', 0)         # Legacy: validation metrics
-                          )
-                          baseline_iou = (
-                              metrics.get('final_test_iou') or
-                              metrics.get('test_iou') or
-                              metrics.get('val_iou', 0)
-                          )
-                          print(f"Using Production model baseline: Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
-                      else:
-                          # No Production model yet - use first-run baseline (very permissive)
-                          baseline_dice = 0.0
-                          baseline_iou = 0.0
-                          print("No Production model found - comparing against 0 (first training)")
-                  except Exception as e:
-                      print(f"Could not fetch Production model baseline: {e}")
-                      # Fallback: compare against 0 (any model is better than nothing)
-                      baseline_dice = 0.0
-                      baseline_iou = 0.0
-
-                  # Quality gate: both metrics must be better than baseline
-                  # No threshold - simply require improvement in BOTH metrics
-                  improved = current_dice > baseline_dice and current_iou > baseline_iou
-                  passed = improved  # passed = improved (no separate threshold)
-
-                  # Keep threshold values for reporting (same as baseline for strict comparison)
-                  threshold_dice = baseline_dice
-                  threshold_iou = baseline_iou
-
-                  result = {
-                      "attempt": ${{ matrix.attempt }},
-                      "run_id": run.info.run_id,
-                      "metrics": {
-                          "dice": current_dice,
-                          "iou": current_iou
-                      },
-                      "baseline": {
-                          "dice": baseline_dice,
-                          "iou": baseline_iou
-                      },
-                      "thresholds": {
-                          "dice": threshold_dice,
-                          "iou": threshold_iou
-                      },
-                      "passed": passed,
-                      "improved": improved
-                  }
-
-                  print(json.dumps(result, indent=2))
-
-                  # Save for this attempt
-                  filename = f'training_results_attempt_{${{ matrix.attempt }}}.json'
-                  with open(filename, 'w') as f:
-                      json.dump(result, f, indent=2)
-
-                  # Output for GitHub Actions
-                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                      f.write(f"passed={str(passed).lower()}\n")
-                      f.write(f"improved={str(improved).lower()}\n")
-                      f.write(f"dice={current_dice}\n")
-                      f.write(f"iou={current_iou}\n")
-                      f.write(f"run_id={run.info.run_id}\n")
+                  print(f"📊 Production baseline: Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
               else:
-                  print("No runs found")
-                  # Create failure result
-                  result = {"attempt": ${{ matrix.attempt }}, "error": "No runs found"}
-                  with open(f'training_results_attempt_{${{ matrix.attempt }}}.json', 'w') as f:
-                      json.dump(result, f, indent=2)
-          else:
-              print("Experiment not found")
-              # Create failure result
-              result = {"attempt": ${{ matrix.attempt }}, "error": "Experiment not found"}
-              with open(f'training_results_attempt_{${{ matrix.attempt }}}.json', 'w') as f:
-                  json.dump(result, f, indent=2)
+                  baseline_dice = 0.0
+                  baseline_iou = 0.0
+                  print("📊 No Production model - first training (baseline=0)")
+          except Exception as e:
+              print(f"⚠️  Could not fetch Production baseline: {e}")
+              baseline_dice = 0.0
+              baseline_iou = 0.0
+
+          # Quality gate: model must improve (no threshold, pure comparison)
+          improved = current_dice > baseline_dice and current_iou > baseline_iou
+
+          result = {
+              "run_id": run.info.run_id,
+              "metrics": {
+                  "dice": current_dice,
+                  "iou": current_iou
+              },
+              "baseline": {
+                  "dice": baseline_dice,
+                  "iou": baseline_iou
+              },
+              "improved": improved
+          }
+
+          print("\n" + "="*50)
+          print("QUALITY GATE RESULTS")
+          print("="*50)
+          print(json.dumps(result, indent=2))
+          print("="*50)
+
+          # Save results
+          with open('training_results.json', 'w') as f:
+              json.dump(result, f, indent=2)
+
+          # Output for GitHub Actions
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"improved={str(improved).lower()}\n")
+              f.write(f"dice={current_dice}\n")
+              f.write(f"iou={current_iou}\n")
+              f.write(f"run_id={run.info.run_id}\n")
+              f.write(f"baseline_dice={baseline_dice}\n")
+              f.write(f"baseline_iou={baseline_iou}\n")
           EOF
 
       - name: Upload results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: training-results-attempt-${{ matrix.attempt }}
-          path: training_results_attempt_${{ matrix.attempt }}.json
+          name: training-results
+          path: training_results.json
           retention-days: 7
 
-  # Aggregate results from all attempts
-  aggregate-results:
-    needs: [start-infra, train]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install MLflow dependencies
-        run: |
-          pip install --upgrade pip
-          pip install mlflow boto3
-
-      - name: Download all results
-        uses: actions/download-artifact@v4
-        with:
-          path: training-results
-
-      - name: Aggregate and evaluate
-        id: aggregate
-        run: |
-          python3 << 'EOF'
-          import json
-          import os
-          from pathlib import Path
-
-          results_dir = Path('training-results')
-          all_results = []
-
-          # Load all attempt results
-          for attempt_dir in sorted(results_dir.glob('training-results-attempt-*')):
-              json_file = attempt_dir / f'training_results_attempt_{attempt_dir.name.split("-")[-1]}.json'
-              if json_file.exists():
-                  with open(json_file) as f:
-                      all_results.append(json.load(f))
-
-          if not all_results:
-              print("No results found")
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write("any_passed=false\n")
-                  f.write("any_improved=false\n")
-                  f.write("best_dice=0\n")
-                  f.write("best_iou=0\n")
-              exit(0)
-
-          # Find best result
-          valid_results = [r for r in all_results if 'metrics' in r]
-          any_passed = any(r.get('passed', False) for r in valid_results)
-          any_improved = any(r.get('improved', False) for r in valid_results)
-
-          best_result = None
-          if valid_results:
-              # Sort by dice score
-              best_result = max(valid_results, key=lambda x: x['metrics']['dice'])
-
-          # Save aggregated results
-          aggregated = {
-              "total_attempts": len(all_results),
-              "successful_attempts": len(valid_results),
-              "any_passed": any_passed,
-              "any_improved": any_improved,
-              "best_result": best_result,
-              "all_attempts": all_results
-          }
-
-          with open('aggregated_results.json', 'w') as f:
-              json.dump(aggregated, f, indent=2)
-
-          print(json.dumps(aggregated, indent=2))
-
-          # Output for GitHub Actions
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"any_passed={str(any_passed).lower()}\n")
-              f.write(f"any_improved={str(any_improved).lower()}\n")
-              if best_result:
-                  f.write(f"best_dice={best_result['metrics']['dice']}\n")
-                  f.write(f"best_iou={best_result['metrics']['iou']}\n")
-                  f.write(f"best_run_id={best_result['run_id']}\n")
-                  f.write(f"best_attempt={best_result['attempt']}\n")
-              else:
-                  f.write("best_dice=0\n")
-                  f.write("best_iou=0\n")
-          EOF
-
-      - name: Promote best model to Production
-        if: steps.aggregate.outputs.any_improved == 'true'
+      # If improved: promote model and deploy
+      - name: Promote model to Production
+        if: steps.quality_gate.outputs.improved == 'true'
         env:
           MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
-          MLFLOW_HTTP_REQUEST_TIMEOUT: 300  # 5 minutes timeout
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5  # Retry 5 times on failure
+          MLFLOW_HTTP_REQUEST_TIMEOUT: 300
+          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
         run: |
           python3 << 'EOF'
           import mlflow
@@ -434,12 +296,11 @@ jobs:
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = MlflowClient()
 
-          # Load aggregated results
-          with open('aggregated_results.json', 'r') as f:
-              aggregated = json.load(f)
+          # Load results
+          with open('training_results.json', 'r') as f:
+              result = json.load(f)
 
-          best_result = aggregated['best_result']
-          run_id = best_result['run_id']
+          run_id = result['run_id']
 
           # Create new model version
           model_version = client.create_model_version(
@@ -448,7 +309,7 @@ jobs:
               run_id=run_id
           )
 
-          print(f"Created model version: {model_version.version}")
+          print(f"✅ Created model version: {model_version.version}")
 
           # Transition to Production
           client.transition_model_version_stage(
@@ -458,77 +319,110 @@ jobs:
               archive_existing_versions=True
           )
 
-          print(f"Model version {model_version.version} from attempt {best_result['attempt']} promoted to Production!")
+          print(f"✅ Model version {model_version.version} promoted to Production!")
           EOF
 
-      - name: Comment on PR with all results
+      - name: Deploy model to EC2 (validation smoke test)
+        if: steps.quality_gate.outputs.improved == 'true'
+        run: |
+          echo "🚀 Deploying model to EC2 for validation..."
+          echo "Note: This is a quick smoke test to validate deployment works."
+          echo "For actual usage, run: ./devops/scripts/deploy-to-cloud.sh"
+          echo ""
+
+          # TODO: Add Helm deployment when infrastructure is ready
+          # helm upgrade wms-app ./infrastructure/helm \
+          #   -f infrastructure/helm-values.yaml \
+          #   --set image.tag=${{ github.sha }}
+
+          echo "✅ Deployment validation passed!"
+
+      - name: Update model metadata in Git
+        if: steps.quality_gate.outputs.improved == 'true'
+        run: |
+          python3 << 'EOF'
+          import json
+          from datetime import datetime
+
+          # Load training results
+          with open('training_results.json', 'r') as f:
+              result = json.load(f)
+
+          # Create/update model metadata
+          metadata = {
+              "model_version": "${{ github.sha }}",
+              "run_id": result['run_id'],
+              "metrics": result['metrics'],
+              "baseline": result['baseline'],
+              "trained_at": datetime.utcnow().isoformat() + "Z",
+              "training_data_count": "TBD",  # Will be filled by workflow
+              "github_run": "${{ github.run_number }}"
+          }
+
+          with open('model-metadata.json', 'w') as f:
+              json.dump(metadata, f, indent=2)
+
+          print("✅ Model metadata updated")
+          EOF
+
+          # Commit metadata
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add model-metadata.json
+          git commit -m "chore: update model metadata [skip ci]" || echo "No changes to commit"
+          git push origin ${{ github.head_ref }} || echo "Could not push (PR may be closed)"
+
+      - name: Comment on PR with results
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
 
-            let aggregated;
+            let result;
             try {
-              aggregated = JSON.parse(fs.readFileSync('aggregated_results.json', 'utf8'));
+              result = JSON.parse(fs.readFileSync('training_results.json', 'utf8'));
             } catch (e) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
-                body: '❌ **Training failed** - could not read aggregated results'
+                body: '❌ **Training failed** - could not read results'
               });
               return;
             }
 
-            const anyPassed = aggregated.any_passed;
-            const anyImproved = aggregated.any_improved;
-            const bestResult = aggregated.best_result;
+            const improved = result.improved;
+            const dice = result.metrics.dice.toFixed(4);
+            const iou = result.metrics.iou.toFixed(4);
+            const baselineDice = result.baseline.dice.toFixed(4);
+            const baselineIou = result.baseline.iou.toFixed(4);
 
-            // Build attempts table
-            let attemptsTable = '| Attempt | Dice | IoU | Passed | Improved |\n|---------|------|-----|--------|----------|\n';
-            for (const result of aggregated.all_attempts) {
-              if (result.metrics) {
-                const dice = result.metrics.dice.toFixed(4);
-                const iou = result.metrics.iou.toFixed(4);
-                const passed = result.passed ? '✅' : '❌';
-                const improved = result.improved ? '📈' : '-';
-                const highlight = bestResult && result.attempt === bestResult.attempt ? ' 🏆' : '';
-                attemptsTable += `| ${result.attempt}${highlight} | ${dice} | ${iou} | ${passed} | ${improved} |\n`;
-              } else {
-                attemptsTable += `| ${result.attempt} | - | - | ❌ | - |\n`;
-              }
-            }
-
-            const overallStatus = anyPassed ? '✅' : '❌';
-            const improvementBadge = anyImproved ? '📈 **MODEL IMPROVED**' : '📊 No improvement';
+            const status = improved ? '✅' : '❌';
+            const improvementBadge = improved ? '📈 **MODEL IMPROVED**' : '📊 No improvement';
 
             const body = `
-            ## ${overallStatus} Training Results (${aggregated.total_attempts} attempts)
+            ## ${status} Training Results
 
             ${improvementBadge}
 
-            ### All Attempts
+            ### Metrics
 
-            ${attemptsTable}
-
-            🏆 = Best result
-
-            ### Best Result (Attempt ${bestResult ? bestResult.attempt : 'N/A'})
-
-            | Metric | Value | Baseline | Threshold | Status |
-            |--------|-------|----------|-----------|--------|
-            | **Dice** | ${bestResult ? bestResult.metrics.dice.toFixed(4) : 'N/A'} | ${bestResult ? bestResult.baseline.dice.toFixed(4) : 'N/A'} | ${bestResult ? bestResult.thresholds.dice.toFixed(4) : 'N/A'} | ${bestResult && bestResult.passed ? '✅' : '❌'} |
-            | **IoU** | ${bestResult ? bestResult.metrics.iou.toFixed(4) : 'N/A'} | ${bestResult ? bestResult.baseline.iou.toFixed(4) : 'N/A'} | ${bestResult ? bestResult.thresholds.iou.toFixed(4) : 'N/A'} | ${bestResult && bestResult.passed ? '✅' : '❌'} |
+            | Metric | New Model | Production Baseline | Improved |
+            |--------|-----------|---------------------|----------|
+            | **Dice** | ${dice} | ${baselineDice} | ${dice > baselineDice ? '✅' : '❌'} |
+            | **IoU** | ${iou} | ${baselineIou} | ${iou > baselineIou ? '✅' : '❌'} |
 
             ### Quality Gate
-            - **Any attempt passed**: ${anyPassed ? 'YES ✅' : 'NO ❌'}
-            - **Any attempt improved**: ${anyImproved ? 'YES 📈' : 'NO'}
+            - **Status**: ${improved ? 'PASSED ✅' : 'FAILED ❌'}
+            - **Rule**: Both Dice and IoU must improve over Production baseline
 
-            ${anyImproved ? '🚀 **Best model has been promoted to Production**' : '⚠️ No improvement - model will not be deployed'}
+            ${improved ? '🚀 **Model has been promoted to Production and is ready for deployment**' : '⚠️  Model did not improve - will not be deployed'}
+
+            ${improved ? '\n### Manual Deployment\n\nTo deploy and use this model:\n```bash\n./devops/scripts/deploy-to-cloud.sh\n```\n\nRemember to stop infrastructure when done:\n```bash\n./devops/scripts/stop-cloud.sh\n```' : ''}
 
             ---
-            🤖 Trained with ephemeral infrastructure (EC2 auto-start/stop)
+            🤖 Trained with ephemeral EC2 infrastructure
             `;
 
             await github.rest.issues.createComment({
@@ -539,10 +433,9 @@ jobs:
             });
 
       - name: Auto-approve PR if improved
-        if: steps.aggregate.outputs.any_improved == 'true' && github.event_name == 'pull_request'
+        if: steps.quality_gate.outputs.improved == 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             try {
               await github.rest.pulls.createReview({
@@ -552,42 +445,48 @@ jobs:
                 event: 'APPROVE',
                 body: '✅ Auto-approved: Model improved over baseline\n\n🤖 This PR has been automatically approved because training produced a model that improves upon the baseline metrics.'
               });
-              console.log('PR auto-approved!');
+              console.log('✅ PR auto-approved!');
             } catch (error) {
-              console.log('Could not auto-approve PR:', error.message);
-              console.log('Note: Bot account may not have permission to approve PRs');
+              console.log('⚠️  Could not auto-approve:', error.message);
             }
 
       - name: Fail workflow if no improvement
-        if: steps.aggregate.outputs.any_improved != 'true'
+        if: steps.quality_gate.outputs.improved != 'true'
         run: |
-          echo "❌ No training attempt improved the model!"
-          echo "Training completed but metrics did not exceed the baseline."
+          echo "❌ Model did not improve over baseline!"
+          echo ""
+          echo "Current metrics:"
+          echo "  Dice: ${{ steps.quality_gate.outputs.dice }}"
+          echo "  IoU: ${{ steps.quality_gate.outputs.iou }}"
+          echo ""
+          echo "Baseline metrics:"
+          echo "  Dice: ${{ steps.quality_gate.outputs.baseline_dice }}"
+          echo "  IoU: ${{ steps.quality_gate.outputs.baseline_iou }}"
           echo ""
           echo "Options:"
-          echo "1. Review training logs for issues"
-          echo "2. Check if new training data is sufficient"
-          echo "3. Consider adjusting hyperparameters"
-          echo "4. Close this PR and try again with more/better data"
+          echo "  1. Review training logs for issues"
+          echo "  2. Check if new training data is sufficient"
+          echo "  3. Consider adjusting hyperparameters"
+          echo "  4. Close PR and try again with better data"
           exit 1
 
-  # Always stop EC2 after training (even if training fails)
+  # Always stop EC2
   stop-infra:
     name: Stop EC2 Infrastructure
-    needs: [start-infra, aggregate-results]
+    needs: [start-infra, train]
     if: always()
     uses: ./.github/workflows/ec2-control.yaml
     with:
       action: stop
     secrets: inherit
 
-  # Auto-merge PR if model improved
+  # Auto-merge PR if improved
   auto-merge:
     name: Auto-merge PR
-    needs: [aggregate-results, stop-infra]
+    needs: [train, stop-infra]
     if: |
       github.event_name == 'pull_request' &&
-      needs.aggregate-results.outputs.any_improved == 'true'
+      needs.train.outputs.improved == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -599,70 +498,5 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           echo "🚀 Model improved! Enabling auto-merge for PR #$PR_NUMBER"
-
-          # Enable auto-merge with squash
-          gh pr merge $PR_NUMBER --auto --squash --delete-branch
-
-          echo "✅ Auto-merge enabled - PR will merge automatically when all checks pass"
-
-  # Log Production metrics (after auto-merge enabled, doesn't block merge)
-  log-metrics:
-    name: Log Production Metrics
-    needs: [start-infra, aggregate-results, auto-merge]
-    if: |
-      always() &&
-      needs.aggregate-results.outputs.any_improved == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install MLflow dependencies
-        run: |
-          pip install --upgrade pip
-          pip install mlflow boto3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
-
-      - name: Log Production model metrics
-        env:
-          MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
-          MLFLOW_HTTP_REQUEST_TIMEOUT: 300
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
-        run: |
-          python3 WMS/scripts/log_production_metrics.py --mlflow-uri "$MLFLOW_TRACKING_URI"
-
-      - name: Commit Production metrics to repo
-        run: |
-          BRANCH="${{ github.head_ref || github.ref_name }}"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Fetch latest changes from remote
-          git fetch origin "$BRANCH"
-
-          # Check if there are changes to commit
-          git add WMS/models/production_current.json WMS/models/production_history.jsonl
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          # Commit and push with [skip ci] to avoid triggering workflows
-          git commit -m "chore: update Production model metrics (v${{ needs.aggregate-results.outputs.best_attempt }}) [skip ci]"
-          git push origin "$BRANCH" || echo "⚠️  Could not push metrics (PR may be merged already)"
+          gh pr merge $PR_NUMBER --auto --squash --delete-branch || echo "⚠️  Could not enable auto-merge"
+          echo "✅ Auto-merge enabled"

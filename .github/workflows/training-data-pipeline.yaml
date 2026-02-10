@@ -2,24 +2,22 @@ name: Training Data Pipeline
 
 # Complete pipeline for training data changes:
 # 1. Data QA validation
-# 2. DVC add + push to S3 (if validation passes)
-# 3. Create/Update Pull Request for review and training
+# 2. Create/Update Pull Request for review and training
 #
-# Triggers on push to data/* branches (timestamped branches created by pre-push hook)
-# Excludes magic branches handled by data-staging.yaml
+# Note: Data merging is handled by the pre-push hook locally
+# This workflow just validates and creates the PR
+
 on:
   push:
     branches:
       - 'data/**'
-      - '!data/staging'
-      - '!data/new'
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  validate-and-process:
+  validate-and-create-pr:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -34,34 +32,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install opencv-python numpy Pillow PyYAML dvc[s3] boto3
-
-      - name: Configure AWS credentials (for DVC pull)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
-
-      - name: Pull training data from DVC/S3
-        run: |
-          echo "Checking if training data needs to be pulled from DVC..."
-
-          # Check if data is tracked by Git (POC mode) or DVC
-          if git ls-files --error-unmatch WMS/data/training/images/ > /dev/null 2>&1; then
-            echo "✅ Training data is tracked by Git (already in repo)"
-            echo "Skipping DVC pull"
-          elif [ -f "WMS/data/training/images.dvc" ]; then
-            echo "📦 Training data is tracked by DVC"
-            echo "Pulling data from S3..."
-            dvc pull WMS/data/training/images.dvc WMS/data/training/masks.dvc
-            echo "✅ Data pulled successfully"
-          else
-            echo "⚠️  No training data found (neither Git nor DVC)"
-            echo "This is normal for first-time data upload"
-          fi
+        run: pip install opencv-python numpy Pillow PyYAML
 
       - name: Run Data QA Validation
         id: data_qa
@@ -77,63 +48,36 @@ jobs:
 
           # Set outputs
           echo "status=$QA_STATUS" >> $GITHUB_OUTPUT
-          echo "report<<EOF" >> $GITHUB_OUTPUT
-          echo "$REPORT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
-          exit $QA_STATUS
+          # Save report for PR comment
+          echo "$REPORT" > qa_report.json
 
-      # If QA PASSED: DVC add/push and create PR
-      - name: Configure AWS credentials
-        if: steps.data_qa.outputs.status == '0'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: us-east-1
-
-      - name: Configure DVC
-        if: steps.data_qa.outputs.status == '0'
-        run: |
-          # DVC config should already be set in .dvc/config
-          dvc remote list
-
-      - name: DVC add and push training data
-        if: steps.data_qa.outputs.status == '0'
-        run: |
-          echo "Checking if data is tracked by Git or DVC..."
-
-          # Check if data is in Git (POC mode) or needs DVC
-          if git ls-files --error-unmatch WMS/data/training/images/ > /dev/null 2>&1; then
-            echo "⚠️  Training data is tracked by Git (POC mode)"
-            echo "Skipping DVC add/push"
-            echo "For production, move to DVC tracking for large datasets"
-          else
-            echo "Adding training data to DVC..."
-            # Add images and masks to DVC
-            dvc add WMS/data/training/images
-            dvc add WMS/data/training/masks
-
-            # Push to S3
-            echo "Pushing data to S3..."
-            dvc push
+          if [ $QA_STATUS -ne 0 ]; then
+            echo "❌ Data QA failed!"
+            exit 1
           fi
 
-          # Commit .dvc files
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add WMS/data/training/*.dvc
-          git commit -m "dvc: update training data" || echo "No changes to commit"
-          git push origin ${{ github.ref_name }}
+          echo "✅ Data QA passed!"
+
+      - name: Count training data
+        id: count_data
+        run: |
+          IMAGE_COUNT=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          MASK_COUNT=$(find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+
+          echo "image_count=$IMAGE_COUNT" >> $GITHUB_OUTPUT
+          echo "mask_count=$MASK_COUNT" >> $GITHUB_OUTPUT
+
+          echo "Found $IMAGE_COUNT images and $MASK_COUNT masks"
 
       - name: Create or Update Pull Request
-        if: steps.data_qa.outputs.status == '0'
+        if: success()
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const branch = context.ref.replace('refs/heads/', '');
-            const report = JSON.parse(`${{ steps.data_qa.outputs.report }}`);
+            const report = JSON.parse(fs.readFileSync('qa_report.json', 'utf8'));
 
             // Check if PR already exists
             const { data: existingPRs } = await github.rest.pulls.list({
@@ -144,29 +88,40 @@ jobs:
               state: 'open'
             });
 
-            const prBody = `## Training Data Validation - PASSED ✅
+            const prBody = `## Training Data Update - Validation PASSED ✅
 
-            New training data has been uploaded and validated successfully.
+            New training data has been merged and validated successfully.
 
             ### Validation Report
 
-            - **Images**: ${report.image_count}
-            - **Masks**: ${report.mask_count}
-            - **Valid pairs**: ${report.valid_pairs}
-            - **Resolution**: ${report.statistics.resolution || 'N/A'}
-            - **Median coverage**: ${report.statistics['median_coverage_%'] || 'N/A'}%
+            - **Images**: ${report.image_count || 'N/A'}
+            - **Masks**: ${report.mask_count || 'N/A'}
+            - **Valid pairs**: ${report.valid_pairs || 'N/A'}
+            - **Resolution**: ${report.statistics?.resolution || 'N/A'}
+            - **Median coverage**: ${report.statistics?.['median_coverage_%'] || 'N/A'}%
+
+            ### Dataset Details
+
+            This branch contains the **complete merged dataset**:
+            - Existing data from S3 (if any)
+            - New data added locally
+            - Total: ${report.image_count || 'N/A'} training images
 
             ### Next Steps
 
-            1. Training pipeline will run automatically on this PR
-            2. Up to 3 training attempts with different seeds
-            3. Quality gate will compare against baseline metrics
-            4. If model improves, PR will be auto-approved
-            5. Merge to deploy the new model
+            1. ✅ Data validation completed
+            2. ⏳ Training pipeline will run automatically on this PR
+            3. 📊 Quality gate will compare against Production baseline
+            4. 🚀 If model improves, PR will be auto-approved
+            5. ✅ Merge to deploy the new model
 
-            ### DVC Data
+            ### Quality Gate
 
-            Training data has been versioned and pushed to S3 via DVC.
+            The training pipeline will:
+            - Train model on the **full dataset** (${report.image_count || 'N/A'} images)
+            - Compare metrics (Dice, IoU) against Production baseline
+            - Auto-approve if **both** metrics improve
+            - Block merge if metrics don't improve
 
             ---
             🤖 Generated by [GitHub Actions](${context.payload.repository.html_url}/actions/runs/${context.runId})
@@ -181,7 +136,7 @@ jobs:
                 pull_number: pr.number,
                 body: prBody
               });
-              console.log(`Updated existing PR #${pr.number}`);
+              console.log(`✅ Updated existing PR #${pr.number}`);
             } else {
               // Create new PR
               const pr = await github.rest.pulls.create({
@@ -192,16 +147,22 @@ jobs:
                 base: 'main',
                 body: prBody
               });
-              console.log(`Created PR #${pr.data.number}`);
+              console.log(`✅ Created PR #${pr.data.number}`);
             }
 
-      # If QA FAILED: Post error comment on commit
-      - name: Post validation errors
+      - name: Post validation errors (if failed)
         if: failure() && steps.data_qa.outputs.status != '0'
         uses: actions/github-script@v7
         with:
           script: |
-            const report = JSON.parse(`${{ steps.data_qa.outputs.report }}`);
+            const fs = require('fs');
+
+            let report;
+            try {
+              report = JSON.parse(fs.readFileSync('qa_report.json', 'utf8'));
+            } catch (e) {
+              report = { error: 'Could not read QA report' };
+            }
 
             let errorList = '';
             if (report.errors && report.errors.length > 0) {
@@ -241,18 +202,17 @@ jobs:
             `
             });
 
-            console.log('Posted validation errors as commit comment');
-
       - name: Workflow Summary
         if: always()
         run: |
-          echo "## Data Upload Workflow" >> $GITHUB_STEP_SUMMARY
+          echo "## Training Data Pipeline" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.data_qa.outputs.status }}" == "0" ]; then
             echo "✅ **Status**: PASSED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Training data validated, versioned, and PR created." >> $GITHUB_STEP_SUMMARY
+            echo "Training data validated and PR created." >> $GITHUB_STEP_SUMMARY
+            echo "Training pipeline will run automatically." >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ **Status**: FAILED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY

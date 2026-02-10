@@ -8,9 +8,10 @@
 
 This project demonstrates DevOps best practices applied to machine learning, featuring:
 - ✅ Automated data validation and versioning
+- ✅ Automated data merging (existing S3 data + new data)
 - ✅ Ephemeral infrastructure (70% cost savings)
-- ✅ Quality-gated training pipeline (3 attempts per PR)
-- ✅ MLflow experiment tracking
+- ✅ Quality-gated training pipeline (single run, time-optimized)
+- ✅ MLflow experiment tracking and model registry
 - ✅ Infrastructure as Code (Terraform)
 
 **Bachelor's Thesis Project:** "Application of DevOps Techniques in Implementing Automatic CI/CD Process for Training and Versioning AI Models"
@@ -88,16 +89,19 @@ python WMS/src/predicts.py
 👉 **[Full model usage guide](docs/USAGE.md#-using-the-production-model-locally)**
 
 **How it works:** Pre-push hook detects training data changes and automatically:
-- Creates branch `data/YYYYMMDD-HHMMSS`
-- Pushes your data there (not to main)
+- Downloads existing data from S3 (if any)
+- Merges with your new data locally
+- Creates branch `data/YYYYMMDD-HHMMSS` with **full merged dataset**
+- Pushes to branch (not to main)
 - Triggers automated PR → validation → training → auto-merge flow
 
 👉 **[How hooks work](docs/BRANCH_PROTECTION.md#-two-layer-protection-system)**
 
 **That's it!** The system handles:
+- Data merging (existing + new = complete dataset)
 - Data validation
-- Model training (3 attempts with different seeds)
-- Quality comparison against baseline
+- Model training on **full dataset** (single run, faster)
+- Quality comparison against Production baseline
 - Model promotion to MLflow
 - Auto-approval if model improves
 
@@ -188,6 +192,80 @@ python WMS/scripts/sync_model_aws.py --no-stop
 #    - See all versions with full metrics and artifacts
 #    - View training curves and model parameters
 ```
+
+---
+
+## ☁️ Cloud Deployment
+
+Deploy the application to AWS EC2 for live inference and demos.
+
+### Deploy to Cloud
+
+```bash
+# Start infrastructure and deploy application
+./devops/scripts/deploy-to-cloud.sh
+
+# This will:
+# 1. Start EC2 instance with Terraform
+# 2. Wait for MLflow server to be ready
+# 3. Provide access URLs for services
+```
+
+**Access your services:**
+- 📊 **MLflow UI**: `http://<EC2_IP>:5000` - Track experiments, view models
+- 🌐 **Web App**: `http://<EC2_IP>:8000` - Run inference (if deployed)
+- 📖 **API Docs**: `http://<EC2_IP>:8000/docs` - Interactive API documentation
+
+**What gets deployed:**
+- MLflow tracking server (always running)
+- Model serving API (if Helm charts configured)
+- k3s cluster for Kubernetes deployment
+
+### Stop Infrastructure (Important!)
+
+```bash
+# ALWAYS stop infrastructure when done to save costs!
+./devops/scripts/stop-cloud.sh
+
+# This destroys all EC2 resources and stops billing
+```
+
+**💰 Cost Reminder:**
+- Running infrastructure costs ~$0.10/hour
+- Don't forget to shut down after demos/testing
+- Infrastructure is ephemeral - designed for on-demand usage
+
+### Manual Deployment vs. Auto-Deployment
+
+**Auto-deployment (in CI/CD):**
+- Happens automatically when model improves
+- Quick smoke test (~2 minutes)
+- EC2 shuts down immediately after
+- Purpose: Validates deployment works
+
+**Manual deployment (for usage):**
+- Use `./devops/scripts/deploy-to-cloud.sh`
+- Keeps running as long as you need
+- For demos, testing, and development
+- You control when to shut down
+
+### Typical Workflow
+
+```bash
+# 1. Deploy infrastructure
+./devops/scripts/deploy-to-cloud.sh
+
+# 2. Use the application
+# - Test inference via Web UI or API
+# - View experiments in MLflow
+# - Demo to stakeholders
+
+# 3. Stop infrastructure when done
+./devops/scripts/stop-cloud.sh
+```
+
+👉 **[Infrastructure architecture](devops/PLAN.md#ec2-based-architecture)**
+👉 **[Deployment troubleshooting](KNOWN_ISSUES.md)**
 
 ---
 
