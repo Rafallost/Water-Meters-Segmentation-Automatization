@@ -148,55 +148,123 @@ jobs:
       - name: Update DVC tracking
         if: steps.qa.outputs.validation_passed == 'true'
         run: |
+          set -e  # Exit on any error
+
           echo "📋 Updating DVC tracking..."
 
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # If training data is tracked by Git (not DVC), remove from Git first
-          if git ls-files WMS/data/training/images/*.jpg WMS/data/training/images/*.png >/dev/null 2>&1; then
-            echo "⚠️  Training data is tracked by Git, removing from Git tracking..."
-            git rm -r --cached WMS/data/training/images WMS/data/training/masks || true
+          # Step 1: FORCE remove from Git tracking (even if already committed)
+          echo "🗑️  Removing training data from Git tracking..."
+          git rm -r --cached WMS/data/training/images WMS/data/training/masks 2>/dev/null || true
 
-            # Commit removal
-            if ! git diff --staged --quiet; then
-              git commit -m "chore: stop tracking training data in Git (will use DVC) [skip ci]"
-              echo "✅ Removed training data from Git tracking"
-            fi
+          # Commit removal if there are staged changes
+          if ! git diff --staged --quiet 2>/dev/null; then
+            git commit -m "chore: stop tracking training data in Git (moving to DVC) [skip ci]"
+            git push origin ${{ github.ref_name }}
+            echo "✅ Removed from Git tracking and committed"
+          else
+            echo "ℹ️  Files not tracked by Git or already removed"
           fi
 
-          # Add merged dataset to DVC
-          dvc add WMS/data/training/images
-          dvc add WMS/data/training/masks
+          # Step 2: Ensure files exist on disk (they should, but verify)
+          if [ ! -d "WMS/data/training/images" ] || [ -z "$(ls -A WMS/data/training/images 2>/dev/null)" ]; then
+            echo "❌ ERROR: Training images directory is empty!"
+            exit 1
+          fi
 
-          # Push to S3
+          # Step 3: Add to DVC
+          echo "📦 Adding data to DVC..."
+          dvc add WMS/data/training/images || {
+            echo "❌ ERROR: dvc add images failed"
+            echo "Debug info:"
+            ls -la WMS/data/training/images/ | head -5
+            exit 1
+          }
+
+          dvc add WMS/data/training/masks || {
+            echo "❌ ERROR: dvc add masks failed"
+            echo "Debug info:"
+            ls -la WMS/data/training/masks/ | head -5
+            exit 1
+          }
+
+          echo "✅ Data added to DVC successfully"
+
+          # Step 4: Push to S3 (may fail due to AWS Academy restrictions)
           echo "📤 Pushing data to S3..."
-          dvc push || echo "⚠️  DVC push failed (might be AWS Academy restrictions)"
+          if dvc push; then
+            echo "✅ Data pushed to S3"
+          else
+            echo "⚠️  DVC push failed (likely AWS Academy restrictions)"
+            echo "Continuing anyway - .dvc files will be committed"
+          fi
 
-          # Stage .dvc files and .gitignore
+          # Step 5: Verify .dvc files were created
+          if [ ! -f "WMS/data/training/images.dvc" ]; then
+            echo "❌ ERROR: images.dvc file was not created!"
+            exit 1
+          fi
+
+          if [ ! -f "WMS/data/training/masks.dvc" ]; then
+            echo "❌ ERROR: masks.dvc file was not created!"
+            exit 1
+          fi
+
+          echo "✅ .dvc files verified"
+
+          # Step 6: Commit .dvc files and .gitignore
+          echo "💾 Committing DVC metadata..."
           git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
           git add WMS/data/training/.gitignore
 
-          # Commit if there are changes (using environment variables to avoid YAML escaping issues)
+          # Check if .gitignore was modified
+          if [ -f "WMS/data/training/.gitignore" ]; then
+            echo "✅ .gitignore exists"
+            cat WMS/data/training/.gitignore
+          fi
+
           if ! git diff --staged --quiet; then
             TOTAL_IMG="${{ steps.merge.outputs.total_images }}"
             EXISTING_IMG="${{ steps.download.outputs.existing_images }}"
             NEW_IMG="${{ steps.count_new.outputs.new_images }}"
 
-            git commit -m "data: update DVC metadata for merged dataset" \
+            git commit -m "data: add DVC metadata for training dataset" \
                        -m "" \
                        -m "Total images: ${TOTAL_IMG}" \
-                       -m "- Existing: ${EXISTING_IMG}" \
-                       -m "- New: ${NEW_IMG}" \
+                       -m "- Existing from S3: ${EXISTING_IMG}" \
+                       -m "- New in this PR: ${NEW_IMG}" \
+                       -m "" \
+                       -m "Files tracked by DVC:" \
+                       -m "- WMS/data/training/images.dvc" \
+                       -m "- WMS/data/training/masks.dvc" \
                        -m "" \
                        -m "[skip ci]"
 
             git push origin ${{ github.ref_name }}
-            echo "✅ DVC metadata updated"
+            echo "✅ DVC metadata committed and pushed"
+
+            # Verify push succeeded
+            git log --oneline -1
           else
-            echo "ℹ️  No DVC changes to commit"
+            echo "❌ ERROR: No .dvc files to commit!"
+            echo "Debug: checking what was staged..."
+            git status
+            exit 1
           fi
+
+          # Step 7: Final verification
+          echo ""
+          echo "=== Final State Verification ==="
+          echo "Files tracked by Git:"
+          git ls-files WMS/data/training/ | head -10
+          echo ""
+          echo "Files on disk:"
+          ls -la WMS/data/training/images/ | head -5
+          echo ""
+          echo "✅ DVC tracking update complete!"
 
       - name: Create Pull Request
         if: steps.qa.outputs.validation_passed == 'true'
