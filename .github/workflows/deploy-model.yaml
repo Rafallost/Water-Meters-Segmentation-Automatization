@@ -30,6 +30,8 @@ jobs:
   deploy:
     name: Build & Deploy to k3s
     runs-on: self-hosted  # CRITICAL: Must run on EC2 for k3s access
+    env:
+      KUBECONFIG: /home/ec2-user/.kube/config  # Use ec2-user kubeconfig instead of root's k3s.yaml
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,6 +97,50 @@ jobs:
           # Force restart of any existing pods to pick up new secret
           kubectl delete pods -l app=ml-model,release=wms-model -n default --ignore-not-found=true
           echo "🔄 Deleted old pods to force restart with new credentials"
+
+      - name: Validate Production Model Exists
+        env:
+          MLFLOW_TRACKING_URI: http://10.0.1.10:5000
+        run: |
+          python3 << 'EOF'
+          import os
+          import sys
+          import mlflow
+
+          mlflow_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
+          mlflow.set_tracking_uri(mlflow_uri)
+
+          try:
+              from mlflow.tracking import MlflowClient
+              client = MlflowClient()
+
+              # Check for Production model
+              model_name = "water-meter-segmentation"
+              versions = client.get_latest_versions(model_name, stages=["Production"])
+
+              if not versions:
+                  print("❌ FATAL: No Production model found in MLflow")
+                  print(f"   Model name: {model_name}")
+                  print(f"   MLflow URI: {mlflow_uri}")
+                  print("")
+                  print("Cannot deploy - train a model first:")
+                  print("  1. Push training data to trigger train.yml workflow")
+                  print("  2. Wait for training to complete")
+                  print("  3. Verify model registered in MLflow")
+                  print("  4. Then retry deployment")
+                  sys.exit(1)
+
+              model = versions[0]
+              print(f"✅ Found Production model: {model_name} v{model.version}")
+              print(f"   Run ID: {model.run_id}")
+              print(f"   Source: {model.source}")
+
+          except Exception as e:
+              print(f"❌ MLflow connection error: {e}")
+              print(f"   URI: {mlflow_uri}")
+              print("   Ensure EC2 is running and MLflow is accessible")
+              sys.exit(1)
+          EOF
 
       - name: Deploy via Helm
         run: |
