@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "errors": [],
+  "warnings": [],
+  "statistics": {
+    "median_coverage_%": 1.55,
+    "std_coverage_%": 1.2
+  },
+  "image_count": 10,
+  "mask_count": 10,
+  "valid_pairs": 10
+}
