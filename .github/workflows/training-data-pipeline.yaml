@@ -154,9 +154,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # If training data is tracked by Git (not DVC), remove from Git first
+          if git ls-files WMS/data/training/images/*.jpg WMS/data/training/images/*.png >/dev/null 2>&1; then
+            echo "⚠️  Training data is tracked by Git, removing from Git tracking..."
+            git rm -r --cached WMS/data/training/images WMS/data/training/masks || true
+
+            # Commit removal
+            if ! git diff --staged --quiet; then
+              git commit -m "chore: stop tracking training data in Git (will use DVC) [skip ci]"
+              echo "✅ Removed training data from Git tracking"
+            fi
+          fi
+
           # Add merged dataset to DVC
           dvc add WMS/data/training/images
           dvc add WMS/data/training/masks
+
+          # Push to S3
+          echo "📤 Pushing data to S3..."
+          dvc push || echo "⚠️  DVC push failed (might be AWS Academy restrictions)"
 
           # Stage .dvc files and .gitignore
           git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
