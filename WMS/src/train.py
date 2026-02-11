@@ -645,24 +645,15 @@ with open(os.path.join(models_dir, "metrics.json"), "w") as f:
     json.dump(metrics_out, f, indent=2)
 print("  → Saved metrics.json")
 
-# Log plots and model to MLflow (gracefully handle S3 permission errors)
-try:
-    for png in sorted(Path(results_dir).glob("*.png")):
-        mlflow.log_artifact(str(png), artifact_path="plots")
-    print("  → Plots uploaded to MLflow")
-except Exception as e:
-    print(f"  ⚠️  Warning: Could not upload plots to MLflow: {e}")
-    print("  → Plots saved locally in Results/ directory")
+# Log plots and model to MLflow (fail if S3 upload fails)
+for png in sorted(Path(results_dir).glob("*.png")):
+    mlflow.log_artifact(str(png), artifact_path="plots")
+print("  → Plots uploaded to MLflow")
 
-try:
-    mlflow.pytorch.log_model(
-        model, name="model", registered_model_name="water-meter-segmentation"
-    )
-    print("  → Model registered to MLflow")
-except Exception as e:
-    print(f"  ⚠️  Warning: Could not register model to MLflow: {e}")
-    print("  → Model saved locally as best.pth")
-    print("  → AWS Academy Lab restricts S3 uploads. Model registration skipped.")
+mlflow.pytorch.log_model(
+    model, name="model", registered_model_name="water-meter-segmentation"
+)
+print("  → Model registered to MLflow")
 
 mlflow.end_run()
 print("  → MLflow run finished")

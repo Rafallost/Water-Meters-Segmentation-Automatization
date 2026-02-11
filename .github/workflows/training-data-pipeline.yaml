@@ -577,31 +577,24 @@ jobs:
 
           run_id = result['run_id']
 
-          # Try to promote model (may fail due to AWS Academy S3 restrictions)
-          try:
-              # Create new model version
-              model_version = client.create_model_version(
-                  name="water-meter-segmentation",
-                  source=f"runs:/{run_id}/model",
-                  run_id=run_id
-              )
+          # Promote model to Production (fail if S3 upload fails)
+          model_version = client.create_model_version(
+              name="water-meter-segmentation",
+              source=f"runs:/{run_id}/model",
+              run_id=run_id
+          )
 
-              print(f"✅ Created model version: {model_version.version}")
+          print(f"✅ Created model version: {model_version.version}")
 
-              # Transition to Production
-              client.transition_model_version_stage(
-                  name="water-meter-segmentation",
-                  version=model_version.version,
-                  stage="Production",
-                  archive_existing_versions=True
-              )
+          # Transition to Production
+          client.transition_model_version_stage(
+              name="water-meter-segmentation",
+              version=model_version.version,
+              stage="Production",
+              archive_existing_versions=True
+          )
 
-              print(f"✅ Model version {model_version.version} promoted to Production!")
-          except Exception as e:
-              print(f"⚠️  Warning: Could not promote model to MLflow Model Registry: {e}")
-              print("→ Model artifacts saved locally (AWS Academy Lab S3 restrictions)")
-              print("→ Manual model deployment required")
-              print("✅ Training succeeded - workflow continues")
+          print(f"✅ Model version {model_version.version} promoted to Production!")
           EOF
 
       - name: Training Summary
