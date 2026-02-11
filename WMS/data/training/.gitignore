@@ -1,0 +1,12 @@
+# Training data files (tracked by DVC)
+# These should not be committed to Git - DVC handles them
+*.jpg
+*.jpeg
+*.png
+*.bmp
+
+# DVC cache
+.dvc/cache
+
+# Keep .dvc metadata files (these SHOULD be in Git)
+!*.dvc
