@@ -10,7 +10,7 @@ on:
       - 'infrastructure/helm-values.yaml'  # Deployment config
       - 'requirements.txt'       # Python dependencies
       - 'WMS/models/production_current.json'  # New model promoted to Production
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:  # ⚠️ WARNING: Requires Production model in MLflow! Will fail if no model exists.
 
 permissions:
   contents: read
