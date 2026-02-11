@@ -215,16 +215,11 @@ jobs:
 
           echo "✅ .dvc files verified"
 
-          # Step 6: Commit .dvc files and .gitignore
+          # Step 6: Commit .dvc files ONLY (not .gitignore - it blocks future commits)
           echo "💾 Committing DVC metadata..."
           git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
-          git add WMS/data/training/.gitignore
 
-          # Check if .gitignore was modified
-          if [ -f "WMS/data/training/.gitignore" ]; then
-            echo "✅ .gitignore exists"
-            cat WMS/data/training/.gitignore
-          fi
+          # Note: .gitignore is created by DVC but we DON'T commit it to avoid blocking future data uploads
 
           if ! git diff --staged --quiet; then
             TOTAL_IMG="${{ steps.merge.outputs.total_images }}"
@@ -326,9 +321,6 @@ jobs:
             echo "✅ Created PR #$PR_NUMBER: $PR_URL"
             echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
           fi
-          labels: |
-            data-update
-            auto-train
 
       - name: Comment on commit (validation failed)
         if: steps.qa.outputs.validation_passed == 'false'
