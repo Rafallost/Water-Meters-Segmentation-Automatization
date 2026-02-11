@@ -37,7 +37,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install 'dvc[s3]>=3.50.0,<4.0.0' pyyaml pillow 'boto3>=1.34.0,<2.0.0' opencv-python numpy
+          # Use pip legacy resolver to avoid resolution-too-deep errors with DVC dependencies
+          pip install --use-deprecated=legacy-resolver \
+            'dvc[s3]>=3.50.0,<4.0.0' \
+            pyyaml pillow \
+            'boto3>=1.34.0,<2.0.0' \
+            opencv-python numpy
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
