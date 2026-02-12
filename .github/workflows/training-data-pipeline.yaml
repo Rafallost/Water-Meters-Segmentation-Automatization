@@ -247,10 +247,8 @@ jobs:
             # Verify push succeeded
             git log --oneline -1
           else
-            echo "❌ ERROR: No .dvc files to commit!"
-            echo "Debug: checking what was staged..."
-            git status
-            exit 1
+            echo "ℹ️  .dvc files unchanged (data already tracked with same hash)"
+            echo "   Continuing with existing DVC metadata..."
           fi
 
           # Step 7: Final verification
