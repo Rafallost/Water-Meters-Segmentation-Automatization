@@ -230,7 +230,9 @@ jobs:
           # Step 6: Commit .dvc files AND .gitkeep (for directory structure)
           echo "💾 Committing DVC metadata..."
           git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
-          git add WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
+
+          # Force add .gitkeep files (DVC creates .gitignore that blocks them)
+          git add -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
 
           # Note: .gitignore is created by DVC but we DON'T commit it to avoid blocking future data uploads
 
