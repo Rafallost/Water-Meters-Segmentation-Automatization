@@ -195,3 +195,7 @@ mlruns/
 # PyPI configuration file
 .pypirc
 /test-dvc.txt
+
+# DVC-tracked training data directories
+/WMS/data/training/images
+/WMS/data/training/masks

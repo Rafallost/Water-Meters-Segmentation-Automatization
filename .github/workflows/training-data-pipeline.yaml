@@ -180,8 +180,12 @@ jobs:
             exit 1
           fi
 
-          # Step 3: Add to DVC
+          # Step 3: Add to DVC (exclude .gitkeep from tracking)
           echo "📦 Adding data to DVC..."
+
+          # Remove .gitkeep temporarily (DVC shouldn't track them, only data files)
+          rm -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep 2>/dev/null || true
+
           dvc add WMS/data/training/images || {
             echo "❌ ERROR: dvc add images failed"
             echo "Debug info:"
@@ -196,7 +200,10 @@ jobs:
             exit 1
           }
 
-          echo "✅ Data added to DVC successfully"
+          # Recreate .gitkeep files (for Git to track empty dirs, but DVC ignores them)
+          touch WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
+
+          echo "✅ Data added to DVC successfully (nfiles excludes .gitkeep)"
 
           # Step 4: Push to S3 (may fail due to AWS Academy restrictions)
           echo "📤 Pushing data to S3..."
