@@ -57,6 +57,17 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1
 
+      - name: Restore files from DVC
+        run: |
+          echo "📦 Restoring files from DVC cache..."
+          # Checkout files tracked by .dvc files (if they exist)
+          if [ -f "WMS/data/training/images.dvc" ]; then
+            dvc checkout WMS/data/training/images.dvc || echo "⚠️  No cache yet (first time)"
+          fi
+          if [ -f "WMS/data/training/masks.dvc" ]; then
+            dvc checkout WMS/data/training/masks.dvc || echo "⚠️  No cache yet (first time)"
+          fi
+
       - name: Count new files
         id: count_new
         run: |
@@ -399,18 +410,26 @@ jobs:
           pip install -r requirements.txt
           pip install dvc[s3]
 
-      - name: Pull training data with DVC (if needed)
+      - name: Pull training data with DVC
         run: |
           cd WMS/data/training
 
-          # Check if data already in repo (from data branch)
-          if [ -d "images" ] && [ "$(ls -A images)" ]; then
-            echo "✅ Training data already in repository"
-          elif [ -f "images.dvc" ]; then
-            echo "📥 Pulling data from S3 with DVC..."
-            dvc pull images.dvc masks.dvc || echo "⚠️  DVC pull failed, using local data"
+          # Always pull data from DVC (files not in Git anymore, only .dvc metadata)
+          if [ -f "images.dvc" ] && [ -f "masks.dvc" ]; then
+            echo "📥 Pulling training data from DVC/S3..."
+            dvc pull images.dvc masks.dvc
+
+            # Verify files were pulled
+            IMG_COUNT=$(find images -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | wc -l)
+            MASK_COUNT=$(find masks -type f \( -name "*.jpg" -o -name "*.png" \) 2>/dev/null | wc -l)
+            echo "✅ Pulled $IMG_COUNT images and $MASK_COUNT masks"
+
+            if [ "$IMG_COUNT" -eq 0 ]; then
+              echo "❌ ERROR: No images found after DVC pull!"
+              exit 1
+            fi
           else
-            echo "⚠️  No training data found"
+            echo "❌ ERROR: .dvc files not found!"
             exit 1
           fi
 
