@@ -220,11 +220,9 @@ jobs:
 
           echo "✅ .dvc files verified"
 
-          # Step 6: Commit .dvc files ONLY (not .gitignore - it blocks future commits)
+          # Step 6: Commit .dvc files AND .gitignore
           echo "💾 Committing DVC metadata..."
-          git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
-
-          # Note: .gitignore is created by DVC but we DON'T commit it to avoid blocking future data uploads
+          git add WMS/data/training/images.dvc WMS/data/training/masks.dvc WMS/data/training/.gitignore
 
           if ! git diff --staged --quiet; then
             TOTAL_IMG="${{ steps.merge.outputs.total_images }}"
