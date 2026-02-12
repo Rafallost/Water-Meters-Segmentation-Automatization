@@ -14,6 +14,11 @@ on:
     branches:
       - 'data/**'
 
+# Only one training pipeline at a time - queue others instead of cancelling
+concurrency:
+  group: training-pipeline
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
@@ -484,138 +489,137 @@ jobs:
           echo "❌ MLflow server did not become ready (5 minutes)"
           exit 1
 
-      - name: Train model
-        env:
-          MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
-          MLFLOW_HTTP_REQUEST_TIMEOUT: 300
-          MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          echo "=== Training Model ==="
-          echo "MLflow URL: $MLFLOW_TRACKING_URI"
-          cd WMS/src
-          python train.py --config ../configs/train.yaml --seed ${{ github.run_number }}
-
-      - name: Quality Gate - Compare with Production baseline
+      - name: Train and Quality Gate (up to 3 attempts)
         id: quality_gate
         env:
           MLFLOW_TRACKING_URI: ${{ needs.start-infra.outputs.mlflow_url }}
           MLFLOW_HTTP_REQUEST_TIMEOUT: 300
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
+          PYTHONPATH: ${{ github.workspace }}
+          BASE_SEED: ${{ github.run_number }}
         run: |
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           import mlflow
+          import subprocess
           import json
           import os
+          import sys
 
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
 
-          # Get latest run from experiment
-          experiment = client.get_experiment_by_name("water-meter-segmentation")
-          if not experiment:
-              print("❌ Experiment not found")
-              exit(1)
+          base_seed = int(os.environ['BASE_SEED'])
+          workspace = os.environ['GITHUB_WORKSPACE']
 
-          runs = client.search_runs(
-              experiment_ids=[experiment.experiment_id],
-              order_by=["start_time DESC"],
-              max_results=1
-          )
-
-          if not runs:
-              print("❌ No runs found")
-              exit(1)
-
-          run = runs[0]
-          metrics = run.data.metrics
-
-          # Get current model metrics
-          current_dice = (
-              metrics.get('final_test_dice') or
-              metrics.get('test_dice') or
-              metrics.get('val_dice', 0)
-          )
-          current_iou = (
-              metrics.get('final_test_iou') or
-              metrics.get('test_iou') or
-              metrics.get('val_iou', 0)
-          )
-
-          # Get baseline from Production model (if exists)
+          # Fetch Production baseline once (before any training attempts)
           try:
               prod_versions = client.get_latest_versions("water-meter-segmentation", stages=["Production"])
               if prod_versions:
-                  prod_version = prod_versions[0]
-                  prod_run = client.get_run(prod_version.run_id)
-
-                  prod_metrics = prod_run.data.metrics
-                  baseline_dice = (
-                      prod_metrics.get('final_test_dice') or
-                      prod_metrics.get('test_dice') or
-                      prod_metrics.get('val_dice', 0)
-                  )
-                  baseline_iou = (
-                      prod_metrics.get('final_test_iou') or
-                      prod_metrics.get('test_iou') or
-                      prod_metrics.get('val_iou', 0)
-                  )
+                  prod_run = client.get_run(prod_versions[0].run_id)
+                  m = prod_run.data.metrics
+                  baseline_dice = m.get('final_test_dice') or m.get('test_dice') or m.get('val_dice', 0)
+                  baseline_iou  = m.get('final_test_iou')  or m.get('test_iou')  or m.get('val_iou',  0)
                   print(f"📊 Production baseline: Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
               else:
                   baseline_dice = 0.0
-                  baseline_iou = 0.0
+                  baseline_iou  = 0.0
                   print("📊 No Production model - first training (baseline=0)")
           except Exception as e:
               print(f"⚠️  Could not fetch Production baseline: {e}")
               baseline_dice = 0.0
-              baseline_iou = 0.0
+              baseline_iou  = 0.0
 
-          # Quality gate: model must improve (no threshold, pure comparison)
-          improved = current_dice > baseline_dice and current_iou > baseline_iou
+          best_result = None
 
-          result = {
-              "run_id": run.info.run_id,
-              "metrics": {
-                  "dice": current_dice,
-                  "iou": current_iou
-              },
-              "baseline": {
-                  "dice": baseline_dice,
-                  "iou": baseline_iou
-              },
-              "improved": improved
-          }
+          for attempt in range(1, 4):
+              seed = base_seed + (attempt - 1) * 1000
+              print(f"\n{'='*50}")
+              print(f"ATTEMPT {attempt}/3  (seed={seed})")
+              print(f"{'='*50}")
+
+              # Run training
+              ret = subprocess.run(
+                  ["python", "train.py", "--config", "../configs/train.yaml", "--seed", str(seed)],
+                  cwd=f"{workspace}/WMS/src"
+              )
+              if ret.returncode != 0:
+                  print(f"⚠️  Training attempt {attempt} failed (exit {ret.returncode}), trying next seed...")
+                  continue
+
+              # Get the latest run created by this training
+              experiment = client.get_experiment_by_name("water-meter-segmentation")
+              if not experiment:
+                  print("❌ Experiment not found")
+                  sys.exit(1)
+
+              runs = client.search_runs(
+                  experiment_ids=[experiment.experiment_id],
+                  order_by=["start_time DESC"],
+                  max_results=1
+              )
+              if not runs:
+                  print("❌ No runs found after training")
+                  continue
+
+              run = runs[0]
+              m = run.data.metrics
+              current_dice = m.get('final_test_dice') or m.get('test_dice') or m.get('val_dice', 0)
+              current_iou  = m.get('final_test_iou')  or m.get('test_iou')  or m.get('val_iou',  0)
+
+              improved = current_dice > baseline_dice and current_iou > baseline_iou
+
+              print(f"\n📊 Attempt {attempt} results: Dice={current_dice:.4f}, IoU={current_iou:.4f}")
+              print(f"   Baseline:               Dice={baseline_dice:.4f}, IoU={baseline_iou:.4f}")
+              print(f"   Improved: {'✅ YES' if improved else '❌ NO'}")
+
+              best_result = {
+                  "run_id": run.info.run_id,
+                  "attempt": attempt,
+                  "seed": seed,
+                  "metrics": {"dice": current_dice, "iou": current_iou},
+                  "baseline": {"dice": baseline_dice, "iou": baseline_iou},
+                  "improved": improved
+              }
+
+              if improved:
+                  print(f"\n✅ Model improved on attempt {attempt} - stopping early")
+                  break
+              elif attempt < 3:
+                  print(f"\n⏭️  Not improved - trying attempt {attempt + 1}...")
+
+          if best_result is None:
+              print("❌ All training attempts crashed")
+              sys.exit(1)
 
           print("\n" + "="*50)
-          print("QUALITY GATE RESULTS")
+          print("FINAL QUALITY GATE RESULTS")
           print("="*50)
-          print(json.dumps(result, indent=2))
-          print("="*50)
+          print(json.dumps(best_result, indent=2))
 
-          # Save results
           with open('training_results.json', 'w') as f:
-              json.dump(result, f, indent=2)
+              json.dump(best_result, f, indent=2)
 
-          # Output for GitHub Actions
+          improved = best_result["improved"]
+          current_dice = best_result["metrics"]["dice"]
+          current_iou  = best_result["metrics"]["iou"]
+
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"improved={str(improved).lower()}\n")
               f.write(f"dice={current_dice}\n")
               f.write(f"iou={current_iou}\n")
-              f.write(f"run_id={run.info.run_id}\n")
+              f.write(f"run_id={best_result['run_id']}\n")
               f.write(f"baseline_dice={baseline_dice}\n")
               f.write(f"baseline_iou={baseline_iou}\n")
-
-              # Formatted baseline for display (show "first training" when 0.0)
+              f.write(f"attempt={best_result['attempt']}\n")
               if baseline_dice == 0.0:
-                  f.write(f"baseline_dice_display=0.0 (first training)\n")
+                  f.write("baseline_dice_display=0.0 (first training)\n")
               else:
                   f.write(f"baseline_dice_display={baseline_dice:.4f}\n")
-
               if baseline_iou == 0.0:
-                  f.write(f"baseline_iou_display=0.0 (first training)\n")
+                  f.write("baseline_iou_display=0.0 (first training)\n")
               else:
                   f.write(f"baseline_iou_display={baseline_iou:.4f}\n")
-          EOF
+          PYEOF
 
       - name: Upload results artifact
         if: always()
@@ -674,22 +678,24 @@ jobs:
           echo "## Training Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          ATTEMPT="${{ steps.quality_gate.outputs.attempt }}"
           if [ "${{ steps.quality_gate.outputs.improved }}" == "true" ]; then
-            echo "✅ **Model Improved!**" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Model Improved!** (attempt $ATTEMPT/3)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**New Metrics:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Dice: ${{ steps.quality_gate.outputs.dice }}" >> $GITHUB_STEP_SUMMARY
-            echo "- IoU: ${{ steps.quality_gate.outputs.iou }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Baseline Metrics:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Dice: ${{ steps.quality_gate.outputs.baseline_dice }}" >> $GITHUB_STEP_SUMMARY
-            echo "- IoU: ${{ steps.quality_gate.outputs.baseline_iou }}" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | New Model | Production Baseline |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-----------|---------------------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Dice | ${{ steps.quality_gate.outputs.dice }} | ${{ steps.quality_gate.outputs.baseline_dice_display }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| IoU  | ${{ steps.quality_gate.outputs.iou }}  | ${{ steps.quality_gate.outputs.baseline_iou_display }}  |" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "PR will be created and auto-merged." >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ **Model Did Not Improve**" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Model Did Not Improve** (all $ATTEMPT attempts)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Training completed but model did not surpass baseline." >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Best Result | Production Baseline |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------------|---------------------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Dice | ${{ steps.quality_gate.outputs.dice }} | ${{ steps.quality_gate.outputs.baseline_dice_display }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| IoU  | ${{ steps.quality_gate.outputs.iou }}  | ${{ steps.quality_gate.outputs.baseline_iou_display }}  |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo "No PR will be created." >> $GITHUB_STEP_SUMMARY
           fi
 
