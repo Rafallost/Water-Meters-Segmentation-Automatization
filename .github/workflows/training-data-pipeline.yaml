@@ -80,22 +80,48 @@ jobs:
       - name: Download existing dataset from S3
         id: download
         run: |
-          echo "📥 Downloading existing dataset from S3..."
+          echo "📥 Downloading existing dataset from main branch (S3)..."
 
-          # Check if .dvc files exist (not first upload)
-          if [ -f "WMS/data/training/images.dvc" ]; then
-            # Create temp directory for existing data
-            mkdir -p /tmp/existing_data/images /tmp/existing_data/masks
+          mkdir -p /tmp/existing_data/images /tmp/existing_data/masks /tmp/new_data/images /tmp/new_data/masks
 
-            # Pull existing data
-            dvc pull WMS/data/training/images.dvc WMS/data/training/masks.dvc || {
-              echo "⚠️  DVC pull failed - assuming first upload"
+          # Save new files (from data branch) to temp before we overwrite with main branch data
+          if [ -d "WMS/data/training/images" ] && [ "$(ls -A WMS/data/training/images 2>/dev/null)" ]; then
+            cp -a WMS/data/training/images/. /tmp/new_data/images/
+          fi
+          if [ -d "WMS/data/training/masks" ] && [ "$(ls -A WMS/data/training/masks 2>/dev/null)" ]; then
+            cp -a WMS/data/training/masks/. /tmp/new_data/masks/
+          fi
+          NEW_SAVED=$(find /tmp/new_data/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          echo "💾 Saved $NEW_SAVED new files to temp"
+
+          # Get .dvc files from main branch (not the current data branch)
+          git fetch origin main --quiet
+          if git show origin/main:WMS/data/training/images.dvc > /tmp/main_images.dvc 2>/dev/null && \
+             git show origin/main:WMS/data/training/masks.dvc > /tmp/main_masks.dvc 2>/dev/null; then
+
+            echo "✅ Found existing .dvc files on main branch"
+
+            # Temporarily replace .dvc files with main branch versions to pull existing data
+            cp WMS/data/training/images.dvc /tmp/branch_images.dvc
+            cp WMS/data/training/masks.dvc /tmp/branch_masks.dvc
+            cp /tmp/main_images.dvc WMS/data/training/images.dvc
+            cp /tmp/main_masks.dvc WMS/data/training/masks.dvc
+
+            # Pull existing data using main branch .dvc hashes
+            dvc pull WMS/data/training/images.dvc WMS/data/training/masks.dvc 2>&1 || {
+              echo "⚠️  DVC pull failed - no existing data in S3 yet"
+              cp /tmp/branch_images.dvc WMS/data/training/images.dvc
+              cp /tmp/branch_masks.dvc WMS/data/training/masks.dvc
               echo "existing_images=0" >> $GITHUB_OUTPUT
               echo "existing_masks=0" >> $GITHUB_OUTPUT
               exit 0
             }
 
-            # Move existing data to temp (if directories exist and have files)
+            # Restore branch .dvc files
+            cp /tmp/branch_images.dvc WMS/data/training/images.dvc
+            cp /tmp/branch_masks.dvc WMS/data/training/masks.dvc
+
+            # Move existing (main branch) data to temp
             if [ -d "WMS/data/training/images" ] && [ "$(ls -A WMS/data/training/images 2>/dev/null)" ]; then
               mv WMS/data/training/images/* /tmp/existing_data/images/ 2>/dev/null || true
             fi
@@ -103,14 +129,17 @@ jobs:
               mv WMS/data/training/masks/* /tmp/existing_data/masks/ 2>/dev/null || true
             fi
 
-            # Count existing files
+            # Restore new files back to working directory
+            cp -a /tmp/new_data/images/. WMS/data/training/images/ 2>/dev/null || true
+            cp -a /tmp/new_data/masks/. WMS/data/training/masks/ 2>/dev/null || true
+
             EXISTING_IMAGES=$(find /tmp/existing_data/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
             EXISTING_MASKS=$(find /tmp/existing_data/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
             echo "existing_images=$EXISTING_IMAGES" >> $GITHUB_OUTPUT
             echo "existing_masks=$EXISTING_MASKS" >> $GITHUB_OUTPUT
-            echo "✅ Downloaded $EXISTING_IMAGES existing images from S3"
+            echo "✅ Downloaded $EXISTING_IMAGES existing images from S3 (main branch)"
           else
-            echo "ℹ️  No .dvc files found - first upload"
+            echo "ℹ️  No .dvc files on main branch - this is the first upload"
             echo "existing_images=0" >> $GITHUB_OUTPUT
             echo "existing_masks=0" >> $GITHUB_OUTPUT
           fi
