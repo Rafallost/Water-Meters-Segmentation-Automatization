@@ -103,16 +103,15 @@ git push origin main
 → Pushes there
 → Blocks push to main
 
-# 3. GitHub Actions trigger automatically
-→ data-upload.yaml validates data
-→ Creates PR #42 to main
-→ train.yml runs (3 training attempts)
-→ Quality gate checks if model improved
+# 3. GitHub Actions trigger automatically (training-data-pipeline.yaml)
+→ merge-and-validate: downloads existing S3 data, merges, validates
+→ start-infra: starts EC2
+→ train: up to 3 attempts (different seeds), quality gate after each
+→ stop-infra: stops EC2 (always runs)
 
 # 4. If model improved:
-→ Auto-approve PR
-→ Auto-merge to main
-→ release-deploy.yaml deploys new model
+→ create-pr: creates PR to main
+→ auto-merge: enables auto-merge on PR
 
 # 5. Done! Zero manual work after initial push
 ```
@@ -296,12 +295,11 @@ main
 - ☑ **Require status checks to pass before merging**
   - ☑ **Require branches to be up to date before merging**
   - **Status checks that are required:**
-    - Select: `lint-and-test` (from CI Pipeline)
-    - Select: `Train Model / Data Quality Assurance`
-    - Select: `Train Model / aggregate-results`
+    - Select: `merge-and-validate` (from training-data-pipeline.yaml)
+    - Select: `Train Model` (from training-data-pipeline.yaml)
 
 **Don't select:**
-- ❌ `Data Upload` - This is for data branches, not PRs
+- ❌ `start-infra` / `stop-infra` - infrastructure jobs, not quality gates
 
 #### ✅ Require conversation resolution before merging
 - ☑ **Require conversation resolution before merging** (optional)
