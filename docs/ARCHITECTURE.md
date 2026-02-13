@@ -166,19 +166,20 @@ Elastic IP (optional, not currently used)
 
 #### Training Runners
 - **Where:** GitHub-hosted runners (free!)
-- **Duration:** ~3 minutes per attempt
-- **Parallelization:** 3 attempts run simultaneously
+- **Duration:** ~10-15 minutes per attempt
+- **Attempts:** Up to 3 (different random seeds), stops early if model improves
 
 #### Training Process
 ```
 1. prepareDataset.py
    ↓ Splits data into train/val/test
-2. train.py
+2. train.py  (up to 3 attempts with different seeds)
    ↓ Trains U-Net model
    ↓ Logs to MLflow (metrics, artifacts)
-3. quality-gate.py
-   ↓ Compares to baseline
-   ↓ Promotes if improved
+3. Quality gate (inline, after each attempt)
+   ↓ Compares to Production baseline in MLflow
+   ↓ Stops on first attempt that improves
+   ↓ Promotes to Production if improved
 ```
 
 #### Model Architecture
@@ -197,16 +198,17 @@ Elastic IP (optional, not currently used)
 User Action → Workflow Trigger → Jobs → Steps → Tools
 
 Example:
-  git checkout -b data/$(date +%Y%m%d-%H%M%S)
-  git push origin HEAD
+  git add WMS/data/training/images/new.jpg
+  git commit -m "data: new sample"
+  git push origin main
     ↓
-  data-upload.yaml
+  Pre-push hook intercepts
+    ↓ Creates data/20260213-HHMMSS branch, pushes there
+  training-data-pipeline.yaml (triggered on data/* push)
     ↓
-  Validates & creates PR
-    ↓
-  train.yml (PR trigger)
-    ↓
-  start-infra → train (×3) → aggregate → stop-infra
+  merge-and-validate → start-infra → train (up to 3×) → stop-infra
+    ↓ if improved:
+  create-pr → auto-merge
 ```
 
 See **WORKFLOWS.md** for detailed workflow explanations.
@@ -224,15 +226,13 @@ See **WORKFLOWS.md** for detailed workflow explanations.
   - Sufficient coverage (>100 pixels)
 - **Blocks training if fails**
 
-#### Model Quality Gate (`quality-gate.py`)
-- Runs after training
-- Baseline metrics (from original model):
-  - Dice: 0.9275
-  - IoU: 0.8865
-- Thresholds (2% tolerance):
-  - Dice: ≥0.9075
-  - IoU: ≥0.8665
-- **Promotes to Production if improved**
+#### Model Quality Gate (inline in `training-data-pipeline.yaml`)
+- Runs after each training attempt (up to 3)
+- Baseline: dynamically fetched from MLflow Production model
+  - If no Production model exists: baseline = 0.0 (first training always passes)
+- Condition: `new_dice > baseline_dice AND new_iou > baseline_iou`
+- **Promotes to Production if improved, stops retrying early**
+- **No PR created if model did not improve after all attempts**
 
 ---
 
@@ -241,28 +241,32 @@ See **WORKFLOWS.md** for detailed workflow explanations.
 ### Training Data Flow
 ```
 Local Machine
-  ↓ git push
-GitHub Repository
-  ↓ DVC pull (in GitHub Actions)
-S3 Bucket
-  ↓ Download during training
+  ↓ git push origin main (with new images)
+Pre-Push Hook
+  ↓ Creates data/TIMESTAMP branch, pushes there
+GitHub Actions (training-data-pipeline.yaml)
+  ↓ Downloads existing data from S3 (main branch .dvc hashes)
+  ↓ Merges existing + new data on runner
+  ↓ Validates merged dataset (data-qa.py)
+  ↓ dvc add + dvc push → S3 DVC Bucket (merged dataset)
 GitHub-Hosted Runner
-  ↓ Train model
+  ↓ dvc pull (full merged dataset)
+  ↓ Train model (up to 3 attempts)
 MLflow on EC2
-  ↓ Store model artifact
+  ↓ Store metrics + model artifacts
 S3 MLflow Bucket
 ```
 
-### Model Deployment Flow (Future)
+### Model Deployment Flow
 ```
 MLflow Model Registry (Production stage)
-  ↓ Download model
+  ↓ download-model.sh (on EC2)
 Docker Image Build
-  ↓ Push to ECR
+  ↓ build-and-push.sh → push to ECR
 ECR
-  ↓ Pull image
+  ↓ deploy-to-k3s.sh → pull image
 k3s on EC2
-  ↓ Serve via HTTP API
+  ↓ Serve via HTTP API (NodePort)
 Users/Applications
 ```
 
