@@ -64,14 +64,10 @@ jobs:
 
       - name: Restore files from DVC
         run: |
-          echo "📦 Restoring files from DVC cache..."
-          # Checkout files tracked by .dvc files (if they exist)
-          if [ -f "WMS/data/training/images.dvc" ]; then
-            dvc checkout WMS/data/training/images.dvc || echo "⚠️  No cache yet (first time)"
-          fi
-          if [ -f "WMS/data/training/masks.dvc" ]; then
-            dvc checkout WMS/data/training/masks.dvc || echo "⚠️  No cache yet (first time)"
-          fi
+          echo "📦 Counting new files from branch..."
+          IMG_COUNT=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          MASK_COUNT=$(find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
+          echo "📊 Files present in branch: $IMG_COUNT images, $MASK_COUNT masks"
 
       - name: Count new files
         id: count_new
@@ -89,13 +85,13 @@ jobs:
 
           mkdir -p /tmp/existing_data/images /tmp/existing_data/masks /tmp/new_data/images /tmp/new_data/masks
 
-          # Save new files (from data branch) to temp before we overwrite with main branch data
-          if [ -d "WMS/data/training/images" ] && [ "$(ls -A WMS/data/training/images 2>/dev/null)" ]; then
-            cp -a WMS/data/training/images/. /tmp/new_data/images/
-          fi
-          if [ -d "WMS/data/training/masks" ] && [ "$(ls -A WMS/data/training/masks 2>/dev/null)" ]; then
-            cp -a WMS/data/training/masks/. /tmp/new_data/masks/
-          fi
+          # Save new files (from data branch) to temp, then CLEAR directories so DVC can pull cleanly
+          find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) \
+            -exec cp {} /tmp/new_data/images/ \;
+          find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) -delete
+          find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) \
+            -exec cp {} /tmp/new_data/masks/ \;
+          find WMS/data/training/masks -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) -delete
           NEW_SAVED=$(find /tmp/new_data/images -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l)
           echo "💾 Saved $NEW_SAVED new files to temp"
 
