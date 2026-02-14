@@ -201,7 +201,8 @@ jobs:
           }
 
           echo "Testing health endpoint..."
-          kubectl exec -l app=ml-model,release=wms-model -- curl -f http://localhost:8000/health
+          POD=$(kubectl get pod -l app=ml-model,release=wms-model -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec "$POD" -- curl -f http://localhost:8000/health
 
           echo "✅ Deployment verified successfully"
 
