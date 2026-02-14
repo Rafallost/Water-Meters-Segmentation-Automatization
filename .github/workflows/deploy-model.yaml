@@ -202,7 +202,7 @@ jobs:
 
           echo "Testing health endpoint..."
           POD=$(kubectl get pod -l app=ml-model,release=wms-model -o jsonpath='{.items[0].metadata.name}')
-          kubectl exec "$POD" -- curl -f http://localhost:8000/health
+          kubectl exec "$POD" -- python3 -c "import urllib.request; r = urllib.request.urlopen('http://localhost:8000/health'); print(r.read().decode())"
 
           echo "✅ Deployment verified successfully"
 
