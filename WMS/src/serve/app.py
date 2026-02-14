@@ -375,6 +375,7 @@ downloadBtn.addEventListener('click', async () => {
 </body>
 </html>"""
     from fastapi.responses import HTMLResponse
+
     return HTMLResponse(content=html)
 
 
