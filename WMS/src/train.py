@@ -179,9 +179,27 @@ testDataset = WMSDataset(testImagePaths, testMaskPaths, imageTransforms=valTrans
 # DataLoaders
 batch_size = config["training"]["batch_size"]
 num_workers = min(4, os.cpu_count() or 1)
-trainLoader = DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=False)
-valLoader = DataLoader(valDataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=False)
-testLoader = DataLoader(testDataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=False)
+trainLoader = DataLoader(
+    trainDataset,
+    batch_size=batch_size,
+    shuffle=True,
+    num_workers=num_workers,
+    pin_memory=False,
+)
+valLoader = DataLoader(
+    valDataset,
+    batch_size=batch_size,
+    shuffle=False,
+    num_workers=num_workers,
+    pin_memory=False,
+)
+testLoader = DataLoader(
+    testDataset,
+    batch_size=batch_size,
+    shuffle=False,
+    num_workers=num_workers,
+    pin_memory=False,
+)
 
 # Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
