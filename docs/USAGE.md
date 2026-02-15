@@ -61,21 +61,22 @@ git push origin main
 The automated pipeline runs:
 
 ```
-Data Merging (in GitHub Actions) → Data QA → PR Created → EC2 starts → Train ONCE → Quality Gate → EC2 stops
+Data Merging → Data QA → GitHub artifact → EC2 starts → Train ONCE → Quality Gate → EC2 stops
+                                                                              ↓ if improved:
+                                                              dvc push → PR created → auto-merge
 ```
 
 **Monitor progress:**
 - Go to: https://github.com/YOUR_USERNAME/Water-Meters-Segmentation-Autimatization/actions
-- Check workflow logs for data merging and training
-- Wait for PR to be created with merged dataset
-- Training runs automatically on PR
+- Check workflow: `training-data-pipeline`
 
 **What happens:**
-1. **Data Merging** (~1-3 min): Downloads S3 data + merges with your new data
+1. **Data Merging** (~1-3 min): Downloads S3 data, merges z nowymi, pakuje jako artifact
 2. **Data QA** (~30 sec): Validates merged dataset
-3. **PR Created**: With complete merged dataset
-4. **Training** (~10-12 min): Single run on full dataset
+3. **EC2 start** (~3-5 min): Uruchamia instancję z MLflow
+4. **Training** (~1-2h): Single run na t3.large CPU, 50 epok
 5. **Quality Gate**: Compares against Production baseline (dynamic)
+6. **Jeśli improved**: dvc push, PR created, auto-merge
 
 ---
 
@@ -107,46 +108,30 @@ The workflow posts a comment on your PR with:
 
 #### ❌ Failure Example:
 ```
-## ❌ Training Results (3 attempts)
+## ❌ Training Results
 
 📊 No improvement
 
-### All Attempts
-| Attempt | Dice   | IoU    | Passed | Improved |
-|---------|--------|--------|--------|----------|
-| 1       | 0.9050 | 0.8650 | ✅     | -        |
-| 2       | 0.9070 | 0.8670 | ✅     | -        |
-| 3       | 0.9060 | 0.8660 | ✅     | -        |
+| Metric | New Model | Production | Improved |
+|--------|-----------|------------|----------|
+| Dice   | 0.9050    | 0.9275     | ❌       |
+| IoU    | 0.8650    | 0.8865     | ❌       |
 
-⚠️ No improvement - model will not be deployed
-
-Options:
-1. Review training logs for issues
-2. Check if new training data is sufficient
-3. Consider adjusting hyperparameters
-4. Close this PR and try again with more/better data
+⚠️ No improvement - no PR created, data branch remains for review
 ```
 
-**If no improvement:** PR is NOT approved, don't merge.
+**If no improvement:** PR NIE jest tworzony. Branch `data/TIMESTAMP` pozostaje — przejrzyj logi i spróbuj z lepszymi danymi.
 
 ---
 
-### Step 5: Merge or Close PR
+### Step 5: PR i auto-merge
 
-**If training improved:**
+**Jeśli model improved:** PR jest tworzony automatycznie i auto-merge jest włączony. Możesz też scalić ręcznie:
 ```bash
-# Merge the PR on GitHub UI
-# Or via command line:
 gh pr merge <PR_NUMBER> --squash
 ```
 
-**If training failed:**
-```bash
-# Close PR and improve your data
-gh pr close <PR_NUMBER>
-
-# Go back to Step 1 with better data
-```
+**Jeśli model nie improved:** PR nie zostaje stworzony. Branch `data/TIMESTAMP` pozostaje. Wróć do kroku 1 z lepszymi/większą ilością danych.
 
 ---
 
@@ -303,7 +288,7 @@ Metrics:
 Key Parameters:
     learning_rate: 0.0001
     batch_size: 4
-    epochs: 100
+    epochs: 50
 
 ============================================================
 ❌ POOR MODEL (Dice < 50%) - Retraining recommended!
@@ -472,16 +457,13 @@ Sometimes you want to re-run training without changing data:
 
 1. Go to: https://github.com/YOUR_USERNAME/Water-Meters-Segmentation-Autimatization/actions/workflows/train.yml
 2. Click "Run workflow"
-3. Select branch: Choose PR branch (e.g., `data/20260207-220516`)
-4. Number of attempts: Default is 3
-5. Click green "Run workflow" button
+3. Select branch: Choose data branch (e.g., `data/20260207-220516`)
+4. Click green "Run workflow" button
 
 ### Via GitHub CLI
 
 ```bash
-gh workflow run train.yml \
-  --ref data/20260207-220516 \
-  --field attempts=3
+gh workflow run train.yml --ref data/20260207-220516
 ```
 
 ---

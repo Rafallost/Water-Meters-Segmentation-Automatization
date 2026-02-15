@@ -89,11 +89,6 @@ WMS/data/training/images.dvc   ← Git tracks this (tiny JSON)
 WMS/data/training/images/       ← Actual data in S3 (large)
 ```
 
-#### POC Mode (Current)
-- Training data tracked directly in Git (small dataset, 11 images)
-- Good for quick iterations
-- Production: Move to DVC when dataset grows
-
 ---
 
 ### 3. **ML Experiment Tracking (MLflow)**
@@ -165,21 +160,21 @@ Elastic IP (optional, not currently used)
 ### 5. **Training Pipeline**
 
 #### Training Runners
-- **Where:** GitHub-hosted runners (free!)
-- **Duration:** ~10-15 minutes per attempt
-- **Attempts:** Up to 3 (different random seeds), stops early if model improves
+- **Where:** Self-hosted runner na EC2
+- **Duration:** ~1-2 godziny (50 epok, t3.large CPU)
+- **Attempts:** Jedna próba (single training run)
 
 #### Training Process
 ```
 1. prepareDataset.py
-   ↓ Splits data into train/val/test
-2. train.py  (up to 3 attempts with different seeds)
-   ↓ Trains U-Net model
+   ↓ Splits data into train/val/test (80/10/10)
+2. train.py  (single run, seed = github.run_number)
+   ↓ Trains U-Net model (50 epok, early stopping patience=5)
    ↓ Logs to MLflow (metrics, artifacts)
-3. Quality gate (inline, after each attempt)
-   ↓ Compares to Production baseline in MLflow
-   ↓ Stops on first attempt that improves
+3. Quality gate (inline, po treningu)
+   ↓ Fetches dynamic baseline from MLflow Production
    ↓ Promotes to Production if improved
+   ↓ dvc push (tylko jeśli improved) → S3 DVC bucket
 ```
 
 #### Model Architecture
@@ -206,9 +201,9 @@ Example:
     ↓ Creates data/20260213-HHMMSS branch, pushes there
   training-data-pipeline.yaml (triggered on data/* push)
     ↓
-  merge-and-validate → start-infra → train (up to 3×) → stop-infra
+  merge-and-validate → start-infra → train → stop-infra
     ↓ if improved:
-  create-pr → auto-merge
+  deploy → stop-after-deploy → create-pr → auto-merge
 ```
 
 See **WORKFLOWS.md** for detailed workflow explanations.
@@ -227,12 +222,12 @@ See **WORKFLOWS.md** for detailed workflow explanations.
 - **Blocks training if fails**
 
 #### Model Quality Gate (inline in `training-data-pipeline.yaml`)
-- Runs after each training attempt (up to 3)
+- Runs after single training run
 - Baseline: dynamically fetched from MLflow Production model
   - If no Production model exists: baseline = 0.0 (first training always passes)
 - Condition: `new_dice > baseline_dice AND new_iou > baseline_iou`
-- **Promotes to Production if improved, stops retrying early**
-- **No PR created if model did not improve after all attempts**
+- **Promotes to Production if improved, dvc push do S3, PR created**
+- **No PR created if model did not improve**
 
 ---
 
@@ -243,15 +238,16 @@ See **WORKFLOWS.md** for detailed workflow explanations.
 Local Machine
   ↓ git push origin main (with new images)
 Pre-Push Hook
-  ↓ Creates data/TIMESTAMP branch, pushes there
-GitHub Actions (training-data-pipeline.yaml)
-  ↓ Downloads existing data from S3 (main branch .dvc hashes)
+  ↓ Creates data/TIMESTAMP branch, pushes new files there
+GitHub Actions — merge-and-validate job
+  ↓ Downloads existing data from S3 (via DVC, main branch hashes)
   ↓ Merges existing + new data on runner
   ↓ Validates merged dataset (data-qa.py)
-  ↓ dvc add + dvc push → S3 DVC Bucket (merged dataset)
-GitHub-Hosted Runner
-  ↓ dvc pull (full merged dataset)
-  ↓ Train model (up to 3 attempts)
+  ↓ upload-artifact → GitHub artifact storage (NIE S3 przed treningiem)
+GitHub Actions — train job (EC2 runner)
+  ↓ download-artifact (scalony dataset)
+  ↓ Train model (single run, 50 epochs)
+  ↓ [if improved] dvc add + dvc push → S3 DVC Bucket
 MLflow on EC2
   ↓ Store metrics + model artifacts
 S3 MLflow Bucket
@@ -313,43 +309,28 @@ Users/Applications
 
 ---
 
-## 📊 Monitoring (Future - Phase 9)
+## 📊 Monitoring (opcjonalne)
 
-### Prometheus + Grafana
-- Model inference metrics
-- Request latency
-- Prediction quality
-- System health
-
-**Status:** Not yet implemented (Phase 9)
+Prometheus + Grafana dostępne opcjonalnie — włączone przez `install_monitoring = true` w `terraform.tfvars`. Dostęp przez SSH tunnel (port 3000). Wyłączone domyślnie (~750MB RAM).
 
 ---
 
-## 🚀 Deployment Architecture (Future - Phase 6)
+## 🚀 Deployment Architecture
 
 ```
                 ┌──────────────────────┐
                 │   Model API (k3s)    │
+                │   FastAPI :8000      │
                 │   /predict endpoint  │
                 └──────────┬───────────┘
                            │
-          ┌────────────────┼────────────────┐
-          │                │                │
-     ┌────▼────┐      ┌────▼────┐     ┌────▼────┐
-     │ Pod 1   │      │ Pod 2   │     │ Pod 3   │
-     │ Model   │      │ Model   │     │ Model   │
-     │ v3      │      │ v3      │     │ v3      │
-     └─────────┘      └─────────┘     └─────────┘
-          │                │                │
-          └────────────────┼────────────────┘
-                           │
                     ┌──────▼──────┐
                     │   MLflow    │
-                    │   (Models)  │
+                    │   :5000     │
                     └─────────────┘
 ```
 
-**Status:** Partially implemented (Docker build works, deployment pending)
+Model serwowany przez FastAPI w Docker (ECR → k3s NodePort). Jeden pod na single-node k3s. Deploy przez Helm chart (`devops/helm/ml-model`).
 
 ---
 

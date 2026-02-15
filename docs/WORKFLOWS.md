@@ -29,10 +29,10 @@ This document explains **all GitHub Actions workflows** in this project and when
 │  UNIFIED TRAINING DATA PIPELINE (training-data-pipeline.yaml)│
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │ 1. DATA MERGING & VALIDATION                            ││
-│  │    • Downloads existing dataset from S3                 ││
+│  │    • Downloads existing dataset from S3 (via DVC)       ││
 │  │    • Merges: existing S3 data + new data                ││
 │  │    • Validates merged dataset (pairs, resolutions)      ││
-│  │    • Updates DVC tracking with merged dataset           ││
+│  │    • Pakuje dataset jako GitHub Actions artifact        ││
 │  │    → PASS: Continue   → FAIL: Comment on commit         ││
 │  └───────────────────────┬─────────────────────────────────┘│
 │                          │                                   │
@@ -119,11 +119,11 @@ Detected files:
 ╚════════════════════════════════════════════════════════════╝
 
 What happens next:
-  1. GitHub Actions will download existing data from S3
-  2. Merge: existing S3 data + your new data = complete dataset
-  3. Validate merged dataset (resolution, pairs, masks)
-  4. Create Pull Request with merged dataset
-  5. Training pipeline will run automatically
+  1. GitHub Actions downloads existing data from S3, merges z nowymi
+  2. Validate merged dataset (resolution, pairs, masks)
+  3. Training runs on EC2 (~1-2h)
+  4. Quality gate: compare vs Production baseline
+  5. If improved: DVC push to S3, PR created and auto-merged
 
 Branch: data/20260210-123456
 Track: https://github.com/Rafallost/.../actions
@@ -153,14 +153,13 @@ Track: https://github.com/Rafallost/.../actions
 **What it does (6 jobs):**
 
 #### Job 1: Data Merging & Validation (`merge-and-validate`)
-- Downloads existing dataset from S3 (using GitHub secrets)
+- Downloads existing dataset from S3 (przez DVC + main branch hashes)
 - Merges existing S3 data + new data = complete dataset
 - Runs data QA validation:
   - Checks image/mask pairs match
   - Validates resolutions (512x512)
   - Ensures binary masks (0/255)
-- Updates DVC tracking with merged dataset
-- Commits merged data back to data branch
+- Pakuje scalony dataset jako GitHub Actions artifact (NIE wrzuca do S3 — to dopiero po treningu)
 - **Duration:** ~1-3 minutes
 - **Outcomes:**
   - ✅ PASS → Continue to training
@@ -175,12 +174,12 @@ Track: https://github.com/Rafallost/.../actions
 
 #### Job 3: Training (`train`)
 - **Single training run** (not 3 attempts - faster!)
-- Runs on GitHub-hosted runners (free!)
-- Downloads training data from branch (already merged)
+- Runs na self-hosted runner (EC2)
+- Pobiera dataset z GitHub Actions artifact (brak S3 download — zero kosztów przed quality gate)
 - Connects to MLflow on EC2
-- Trains U-Net model
+- Trains U-Net model (50 epok, t3.large CPU, ~1-2h)
 - Logs metrics to MLflow
-- **Duration:** ~10-12 minutes
+- **Duration:** ~1-2 godziny (CPU, t3.large)
 
 #### Job 4: Quality Gate (within `train` job)
 - Fetches **dynamic baseline** from MLflow Production model
@@ -196,6 +195,11 @@ Track: https://github.com/Rafallost/.../actions
 - Stops EC2 instance to save costs
 - **Always runs** (even if training failed) - critical for cost control
 - **Duration:** ~10 seconds
+
+#### Job 5b: Deploy (`deploy`) — opcjonalnie
+- Uruchamia się tylko jeśli model improved
+- Build Docker image → push do ECR → Helm deploy na k3s
+- Wywoływany przez `deploy-model.yaml` (reusable workflow)
 
 #### Job 6: Create PR (`create-pr`)
 - **Only runs if model improved** (new behavior!)
@@ -437,10 +441,9 @@ git push origin main
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design and diagrams
 - **[USAGE.md](USAGE.md)** - Complete usage guide
-- **[KNOWN_ISSUES.md](../KNOWN_ISSUES.md)** - Known issues and workarounds
-- **[IMPLEMENTATION_SUMMARY.md](../IMPLEMENTATION_SUMMARY.md)** - Simplified pipeline details
+- **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** - Known issues and workarounds
 
 ---
 
-**Last updated:** 2026-02-11
-**Pipeline version:** Unified (training before PR creation, no bot triggering issues)
+**Last updated:** 2026-02-15
+**Pipeline version:** Unified (GitHub artifact transport, DVC push after quality gate)
