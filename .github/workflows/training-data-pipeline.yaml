@@ -494,6 +494,11 @@ jobs:
           dvc add WMS/data/training/images
           dvc add WMS/data/training/masks
 
+          # Remove .gitignore files created by DVC (would block future data uploads)
+          rm -f WMS/data/training/images/.gitignore
+          rm -f WMS/data/training/masks/.gitignore
+          rm -f WMS/data/training/.gitignore
+
           # Recreate .gitkeep
           touch WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
 
