@@ -191,15 +191,15 @@ jobs:
             exit 1
           fi
 
-      - name: Upload merged dataset to S3
+      - name: Upload merged dataset as artifact
         if: steps.qa.outputs.validation_passed == 'true'
-        run: |
-          echo "📤 Uploading merged dataset to S3 (fixed path, overwrite)..."
-          aws s3 sync WMS/data/training/images/ s3://wms-dvc-data-055677744286/training/images/ --delete --quiet
-          aws s3 sync WMS/data/training/masks/  s3://wms-dvc-data-055677744286/training/masks/  --delete --quiet
-          IMG_COUNT=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" \) | wc -l)
-          MASK_COUNT=$(find WMS/data/training/masks  -type f \( -name "*.jpg" -o -name "*.png" \) | wc -l)
-          echo "✅ Uploaded ${IMG_COUNT} images and ${MASK_COUNT} masks"
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-training-data
+          path: |
+            WMS/data/training/images/
+            WMS/data/training/masks/
+          retention-days: 1
 
       - name: Comment on commit (validation failed)
         if: steps.qa.outputs.validation_passed == 'false'
@@ -328,12 +328,14 @@ jobs:
           pip install -r requirements.txt
           pip install dvc[s3]
 
-      - name: Download training data from S3
+      - name: Download training data from artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: merged-training-data
+          path: WMS/data/training/
+
+      - name: Verify training data
         run: |
-          echo "📥 Downloading training data from S3 (fixed path)..."
-          mkdir -p WMS/data/training/images WMS/data/training/masks
-          aws s3 sync s3://wms-dvc-data-055677744286/training/images/ WMS/data/training/images/ --quiet
-          aws s3 sync s3://wms-dvc-data-055677744286/training/masks/  WMS/data/training/masks/  --quiet
           IMG_COUNT=$(find WMS/data/training/images -type f \( -name "*.jpg" -o -name "*.png" \) | wc -l)
           MASK_COUNT=$(find WMS/data/training/masks  -type f \( -name "*.jpg" -o -name "*.png" \) | wc -l)
           echo "✅ Downloaded ${IMG_COUNT} images and ${MASK_COUNT} masks"
@@ -475,6 +477,46 @@ jobs:
                   f.write(f"baseline_iou_display={baseline_iou:.4f}\n")
           PYEOF
 
+      - name: Update DVC tracking
+        if: steps.quality_gate.outputs.improved == 'true'
+        run: |
+          echo "📋 Updating DVC tracking (training improved model)..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Remove jpg/png files from Git (replace with .dvc metadata)
+          git rm -r --cached WMS/data/training/images WMS/data/training/masks 2>/dev/null || true
+
+          # Remove .gitkeep temporarily (DVC shouldn't track them)
+          rm -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
+
+          # Add to DVC
+          dvc add WMS/data/training/images
+          dvc add WMS/data/training/masks
+
+          # Recreate .gitkeep
+          touch WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
+
+          # Push to S3 (DVC content-addressed, audit trail)
+          dvc push
+
+          # Commit .dvc files (jpg/png no longer in branch after this push)
+          git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
+          git add -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
+
+          TOTAL_IMG="${{ needs.merge-and-validate.outputs.total_images }}"
+          EXISTING_IMG="${{ needs.merge-and-validate.outputs.existing_images }}"
+          NEW_IMG="${{ needs.merge-and-validate.outputs.new_images }}"
+
+          git commit -m "data: update DVC metadata after successful training" \
+                     -m "" \
+                     -m "Total images: ${TOTAL_IMG}" \
+                     -m "- Existing from S3: ${EXISTING_IMG}" \
+                     -m "- New in this PR: ${NEW_IMG}"
+
+          git push origin ${{ github.ref_name }}
+          echo "✅ DVC tracking updated — jpg/png removed from branch, .dvc files committed"
+
       - name: Upload results artifact
         if: steps.quality_gate.outputs.improved == 'true'
         uses: actions/upload-artifact@v4
@@ -534,46 +576,6 @@ jobs:
 
           print(f"✅ Model version {model_version.version} promoted to Production!")
           EOF
-
-      - name: Update DVC tracking
-        if: steps.quality_gate.outputs.improved == 'true'
-        run: |
-          echo "📋 Updating DVC tracking (training improved model)..."
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Remove from Git if still tracked
-          git rm -r --cached WMS/data/training/images WMS/data/training/masks 2>/dev/null || true
-
-          # Remove .gitkeep temporarily
-          rm -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
-
-          # Add to DVC
-          dvc add WMS/data/training/images
-          dvc add WMS/data/training/masks
-
-          # Recreate .gitkeep
-          touch WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
-
-          # Push to S3 (DVC content-addressed, audit trail)
-          dvc push
-
-          # Commit .dvc files
-          git add WMS/data/training/images.dvc WMS/data/training/masks.dvc
-          git add -f WMS/data/training/images/.gitkeep WMS/data/training/masks/.gitkeep
-
-          TOTAL_IMG="${{ needs.merge-and-validate.outputs.total_images }}"
-          EXISTING_IMG="${{ needs.merge-and-validate.outputs.existing_images }}"
-          NEW_IMG="${{ needs.merge-and-validate.outputs.new_images }}"
-
-          git commit -m "data: update DVC metadata after successful training" \
-                     -m "" \
-                     -m "Total images: ${TOTAL_IMG}" \
-                     -m "- Existing from S3: ${EXISTING_IMG}" \
-                     -m "- New in this PR: ${NEW_IMG}"
-
-          git push origin ${{ github.ref_name }}
-          echo "✅ DVC tracking updated"
 
       - name: Emergency S3 cleanup note (orphaned DVC files)
         if: failure()
