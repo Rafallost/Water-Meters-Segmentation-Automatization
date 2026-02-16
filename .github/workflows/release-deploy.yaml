@@ -19,6 +19,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Start EC2 infrastructure using reusable workflow
   start-infra:
