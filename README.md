@@ -295,6 +295,45 @@ Deploy the application to AWS EC2 for live inference and demos.
 
 ---
 
+## 🗺️ Architecture Diagrams
+
+The full architecture pack is available in **[docs/DIAGRAMS.md](docs/DIAGRAMS.md)** (10 Mermaid diagrams), including:
+- End-to-end CI/CD + MLOps flow
+- Training pipeline and quality gate logic
+- Local prediction workflow
+- MLflow model versioning lifecycle
+- C4 system context and component architecture
+- Data flow and monitoring stack
+- Cost optimization timeline
+
+Quick architecture preview:
+
+```mermaid
+graph TB
+    subgraph "User Actions"
+        A[User: Add Training Data] --> B[Git Commit & Push]
+    end
+
+    subgraph "GitHub Actions - Training"
+        B --> C[Start EC2 via Workflow]
+        C --> D[Train Model]
+        D --> E[Quality Gate]
+    end
+
+    subgraph "Deployment"
+        E -->|Improved| F[Build Docker]
+        F --> G[Push to ECR]
+        G --> H[Deploy to k3s]
+    end
+
+    subgraph "Monitoring"
+        H --> I[Prometheus]
+        I --> J[Grafana]
+    end
+```
+
+---
+
 ## 🏗️ System Overview
 
 ```
