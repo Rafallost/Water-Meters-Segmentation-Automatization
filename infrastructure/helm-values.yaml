@@ -20,10 +20,10 @@ service:
 resources:
   # Conservative limits for t3.large instance
   limits:
-    memory: "512Mi"
+    memory: "1Gi"
     cpu: "500m"
   requests:
-    memory: "256Mi"
+    memory: "512Mi"
     cpu: "100m"  # Reduced from 250m to fit on busy node
 
 # Environment variables specific to this deployment

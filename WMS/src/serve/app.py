@@ -400,12 +400,15 @@ async def health_check():
 
 
 @app.post("/predict")
-async def predict(image: UploadFile = File(...)):
+async def predict(
+    image: Optional[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(None),
+):
     """
     Predict segmentation mask from uploaded image.
 
     Args:
-        image: Uploaded image file (JPG, PNG)
+        image/file: Uploaded image file (JPG, PNG)
 
     Returns:
         JSON with base64-encoded mask and metadata
@@ -414,11 +417,19 @@ async def predict(image: UploadFile = File(...)):
         predict_errors.inc()
         raise HTTPException(status_code=503, detail="Model not loaded")
 
+    upload = image or file
+    if upload is None:
+        predict_errors.inc()
+        raise HTTPException(
+            status_code=422,
+            detail="No file uploaded. Use form field 'image' (or legacy 'file').",
+        )
+
     start_time = time.time()
 
     try:
         # Read and validate image
-        image_bytes = await image.read()
+        image_bytes = await upload.read()
         image_pil = Image.open(io.BytesIO(image_bytes))
 
         # Convert to RGB if needed
