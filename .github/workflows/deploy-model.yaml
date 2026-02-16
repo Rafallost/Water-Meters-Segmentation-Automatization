@@ -158,6 +158,14 @@ jobs:
               sys.exit(1)
           EOF
 
+      - name: Prepare Monitoring Namespace and Dashboard ConfigMap
+        run: |
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap wms-dashboard-configmap \
+            --from-file=wms-model.json=helm/monitoring/dashboards/wms-model.json \
+            -n monitoring \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Deploy Monitoring Stack (Prometheus + Grafana)
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -167,14 +175,10 @@ jobs:
             --namespace monitoring \
             --create-namespace \
             -f helm/monitoring/values.yaml \
-            --wait --timeout=600s
+            --wait --timeout=900s
 
-      - name: Install/Update Grafana Dashboard ConfigMap
+      - name: Restart Grafana to Reload Dashboard ConfigMap
         run: |
-          kubectl create configmap wms-dashboard-configmap \
-            --from-file=wms-model.json=helm/monitoring/dashboards/wms-model.json \
-            -n monitoring \
-            --dry-run=client -o yaml | kubectl apply -f -
           kubectl rollout restart deployment kube-prometheus-stack-grafana -n monitoring || true
 
       - name: Deploy via Helm
