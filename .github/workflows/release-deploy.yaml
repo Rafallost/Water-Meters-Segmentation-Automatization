@@ -6,7 +6,9 @@ on:
     paths:
       - 'WMS/src/serve/**'      # Serving application code
       - 'docker/**'              # Dockerfile changes
+      - 'devops'                 # Submodule pointer update (gitlink)
       - 'devops/helm/**'         # Helm chart changes
+      - '.gitmodules'            # Submodule configuration changes
       - 'infrastructure/helm-values.yaml'  # Deployment config
       - 'requirements.txt'       # Python dependencies
       # WMS/models/production_current.json intentionally excluded:
