@@ -15,6 +15,12 @@
 
 # Prometheus configuration
 prometheus:
+  # Expose Prometheus UI externally (NodePort)
+  service:
+    type: NodePort
+    port: 9090
+    nodePort: 30900
+
   prometheusSpec:
     # Resource limits for Prometheus
     resources:
@@ -89,8 +95,9 @@ grafana:
 
   # Service configuration
   service:
-    type: ClusterIP
+    type: NodePort
     port: 80
+    nodePort: 30300
 
   # Ingress (optional - for external access)
   ingress:
