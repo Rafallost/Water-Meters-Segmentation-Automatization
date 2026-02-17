@@ -14,7 +14,7 @@ graph TB
         A[User: Add Training Data] --> B[Git Commit & Push]
     end
 
-    subgraph "Git Hooks - NO AWS CREDENTIALS!"
+    subgraph "Git Hook"
         B --> C{Pre-push Hook}
         C -->|Detects NEW data| D[Create data/TIMESTAMP branch<br/>Push NEW files only]
         C -->|No data changes| E[Push to main]
@@ -24,15 +24,17 @@ graph TB
         D --> D1[Download existing data from S3]
         D1 --> D2[Merge: existing + new = complete]
         D2 --> D3[Update DVC tracking]
-        D3 --> F[Trigger PR with merged dataset]
-        F --> G[Data Quality Check]
-        G -->|Failed| H[❌ Comment on commit]
-        G -->|Passed| I[✅ Create PR]
+        D3 --> G[Data Quality Check]
+        G -->|Failed| H[❌ Comment on commit<br/>Pipeline stops]
+        G -->|Passed| I[✅ QA Passed]
+    end
+
+    subgraph "GitHub Actions - Infrastructure"
+        I --> J[Start EC2 Instance<br/>AWS CLI start-instances]
+        J --> K[Wait for self-hosted runner]
     end
 
     subgraph "GitHub Actions - Training"
-        I --> J[Start EC2 via Workflow]
-        J --> K[Wait for k3s/MLflow]
         K --> L[Train Model ONCE<br/>Single run on full dataset]
         L --> M[Log to MLflow]
     end
@@ -45,11 +47,10 @@ graph TB
     end
 
     subgraph "Deployment"
-        P --> R[Auto-approve PR]
-        R --> S[Merge to main]
-        S --> T[Build Docker Image]
-        T --> U[Push to ECR]
-        U --> V[Deploy to k3s]
+        P --> R[Create PR → Auto-merge to main]
+        R --> S[Build Docker Image]
+        S --> T[Push to ECR]
+        T --> V[Deploy to k3s]
         V --> V1[Helm upgrade/install<br/>kube-prometheus-stack]
     end
 
@@ -58,9 +59,10 @@ graph TB
         W --> X[Grafana Dashboard]
     end
 
-    subgraph "Cleanup"
+    subgraph "Cleanup (always runs)"
         M --> Y[Stop EC2]
-        V --> Y
+        Q --> Y
+        V1 --> Y
     end
 
     style P fill:#d4edda,stroke:#2e7d32,color:#000
@@ -72,32 +74,29 @@ graph TB
 
 ## 2. Training Pipeline Details
 
-Up to 3 training attempts with early stop when model improves.
+Single training run on the full merged dataset, with quality gate comparing against the current Production model.
 
 ```mermaid
 graph LR
     subgraph "Start Infrastructure"
         A[EC2 Stopped] --> B[GitHub Actions Trigger]
         B --> C[AWS CLI: start-instances]
-        C --> D[Wait for MLflow /health]
+        C --> D[Wait for self-hosted runner]
     end
 
-    subgraph "Training Loop - up to 3 attempts"
-        D --> F1[Attempt 1<br/>seed=run_number]
-        F1 --> QG1{Quality Gate}
-        QG1 -->|Improved| J[Model Improved ✅]
-        QG1 -->|Not improved| F2[Attempt 2<br/>seed=run_number+1000]
-        F2 --> QG2{Quality Gate}
-        QG2 -->|Improved| J
-        QG2 -->|Not improved| F3[Attempt 3<br/>seed=run_number+2000]
-        F3 --> QG3{Quality Gate}
-        QG3 -->|Improved| J
-        QG3 -->|Not improved| K[Not Improved ❌]
+    subgraph "Training"
+        D --> F[Train Model<br/>seed=run_number]
+        F --> QG{Quality Gate}
     end
 
     subgraph "Quality Gate Logic"
-        QG1 --> BL[Fetch Production Baseline<br/>from MLflow dynamically]
+        QG --> BL[Fetch Production Baseline<br/>from MLflow dynamically]
         BL --> CMP[new_dice > baseline AND<br/>new_iou > baseline]
+    end
+
+    subgraph "Result"
+        QG -->|Improved| J[Model Improved ✅]
+        QG -->|Not improved| K[Not Improved ❌]
     end
 
     subgraph "Promote Model"
@@ -105,12 +104,15 @@ graph LR
         L --> M[Transition to Production]
     end
 
-    subgraph "Result"
+    subgraph "PR & Deployment"
         M --> Q[Create PR → Auto-merge]
-        K --> R[No PR created]
     end
 
-    subgraph "Stop Infrastructure"
+    subgraph "No PR"
+        K --> R[Data branch remains<br/>for review]
+    end
+
+    subgraph "Stop Infrastructure (always)"
         M --> S[EC2 Stop]
         K --> S
     end
@@ -119,10 +121,41 @@ graph LR
     style R fill:#f8d7da,stroke:#842029,color:#000
 ```
 
-**Seed strategy:** `run_number` is the GitHub Actions run number (auto-increments with each pipeline run). Each attempt uses a different seed offset (+0, +1000, +2000), which affects both:
+**Seed strategy:** `run_number` is the GitHub Actions run number (auto-increments with each pipeline run). Using it as the seed ensures different weight initializations and data splits across pipeline runs, improving reproducibility while allowing natural variation.
 
-- Network weight initialization (`torch.manual_seed`)
-- Train/val/test data split (`random_state` in `train_test_split`)
+---
+
+## 2b. Workflow Job Sequence: training-data-pipeline.yaml
+
+Job dependency graph as seen in GitHub Actions — 8 jobs, two conditional branches after training.
+
+```mermaid
+flowchart LR
+    A["1: merge-and-validate<br/>Download S3 · merge<br/>Validate · update DVC"]
+    A -->|validation passed| B["2: start-infra<br/>Start EC2<br/>Wait for runner"]
+    A -->|validation failed| FAIL["❌ Pipeline stops"]
+
+    B --> C["3: train<br/>Train U-Net · log to MLflow<br/>Run quality gate"]
+
+    C -->|"not improved<br/>or failed"| D["4: stop-infra<br/>Stop EC2<br/>if: always()"]
+
+    C -->|"improved = true"| E["5: deploy<br/>Build Docker · push ECR<br/>Helm upgrade · smoke test"]
+    C -->|"improved = true"| G["7: create-pr<br/>Create PR<br/>with metrics"]
+
+    E --> F["6: stop-after-deploy<br/>Stop EC2<br/>if: always()"]
+    G --> H["8: auto-merge<br/>Enable<br/>auto-merge"]
+
+    style FAIL fill:#f8d7da,stroke:#842029,color:#000
+    style D fill:#fff3cd,stroke:#856404,color:#000
+    style F fill:#fff3cd,stroke:#856404,color:#000
+    style E fill:#d4edda,stroke:#2e7d32,color:#000
+    style G fill:#d4edda,stroke:#2e7d32,color:#000
+    style H fill:#d4edda,stroke:#2e7d32,color:#000
+```
+
+**EC2 stop logic:** Two separate stop jobs ensure EC2 is always shut down regardless of outcome:
+- `stop-infra` (job 4): runs if train fails OR model not improved
+- `stop-after-deploy` (job 6): runs after deployment (always)
 
 ---
 
