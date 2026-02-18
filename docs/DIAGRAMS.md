@@ -154,6 +154,7 @@ flowchart LR
 ```
 
 **EC2 stop logic:** Two separate stop jobs ensure EC2 is always shut down regardless of outcome:
+
 - `stop-infra` (job 4): runs if train fails OR model not improved
 - `stop-after-deploy` (job 6): runs after deployment (always)
 
@@ -282,43 +283,35 @@ High-level system components and their interactions.
 
 ```mermaid
 C4Context
-    title System Context Diagram - Water Meters Segmentation Platform
-
-    Person(user, "Data Scientist", "Uploads training data,<br/>runs predictions")
+    Person(user, "Data Scientist", "Uploads training data, runs predictions")
 
     System_Boundary(github, "GitHub") {
-        Container(repo, "Git Repository", "Version Control", "Code, data, configs")
-        Container(actions, "GitHub Actions", "CI/CD", "Workflows, runners")
+        Container(repo, "Git Repository", "Git / DVC", "Code, data manifests, configs")
+        Container(actions, "GitHub Actions", "CI/CD", "8-job training pipeline")
     }
 
     System_Boundary(aws, "AWS Cloud") {
-        Container(ec2, "EC2 Instance", "t3.large", "k3s, MLflow, Docker")
-        ContainerDb(s3, "S3 Bucket", "Object Storage", "DVC data, MLflow artifacts")
-        Container(ecr, "ECR Registry", "Docker Registry", "Model images")
+        Container(ec2, "EC2 t3.large", "Amazon Linux 2023", "Self-hosted runner + k3s node")
+        ContainerDb(s3, "S3 Bucket", "Object Storage", "DVC data + MLflow artifacts")
+        Container(ecr, "ECR", "Docker Registry", "Model API images")
     }
 
-    System_Boundary(k3s, "k3s Cluster (on EC2)") {
-        Container(mlflow, "MLflow Server", "Python", "Experiment tracking,<br/>Model registry")
-        Container(model_api, "Model API", "FastAPI", "Prediction endpoint")
-        Container(prometheus, "Prometheus", "Monitoring", "Metrics collection")
-        Container(grafana, "Grafana", "Visualization", "Dashboards")
+    System_Boundary(k3s, "k3s Cluster") {
+        Container(mlflow, "MLflow", "Python / SQLite", "Experiment tracking, Model registry")
+        Container(model_api, "Model API", "FastAPI / PyTorch", "POST /predict")
+        Container(monitoring, "Prometheus + Grafana", "Monitoring", "Metrics + Dashboards")
     }
 
-    Rel(user, repo, "Pushes data/code", "Git")
-    Rel(repo, actions, "Triggers", "Webhook")
-    Rel(actions, ec2, "Starts/stops", "AWS CLI")
-    Rel(actions, s3, "Reads/writes", "DVC")
-    Rel(actions, ecr, "Pushes images", "Docker")
-
-    Rel(ec2, mlflow, "Runs on", "k3s")
-    Rel(ec2, model_api, "Deploys to", "k3s")
-    Rel(mlflow, s3, "Stores artifacts", "boto3")
-    Rel(model_api, mlflow, "Loads model", "MLflow Client")
-
-    Rel(prometheus, model_api, "Scrapes /metrics", "HTTP")
-    Rel(grafana, prometheus, "Queries", "PromQL")
-    Rel(user, grafana, "Views dashboard", "Browser")
-    Rel(user, mlflow, "Browses experiments", "Browser")
+    Rel(user, repo, "git push")
+    Rel(repo, actions, "Triggers workflow")
+    Rel(actions, ec2, "Starts / stops EC2")
+    Rel(actions, s3, "DVC push / pull")
+    Rel(actions, ecr, "docker push")
+    Rel(mlflow, s3, "Stores artifacts")
+    Rel(model_api, mlflow, "Loads Production model")
+    Rel(monitoring, model_api, "Scrapes /metrics")
+    Rel(user, model_api, "POST /predict")
+    Rel(user, mlflow, "Browses experiments")
 ```
 
 ---
@@ -496,6 +489,79 @@ journey
         Run local predictions: 9: User, predicts.py
         View results: 9: User
 ```
+
+---
+
+## 11. Deployment Diagram
+
+Concrete infrastructure — exact names, addresses and ports as deployed in AWS us-east-1.
+
+```mermaid
+graph TB
+    subgraph dev["💻 Local Machine — Data Scientist"]
+        cli["git push / predicts.py"]
+    end
+
+    subgraph gh["GitHub — Rafallost/Water-Meters-Segmentation-Autimatization"]
+        repo["Repository\ncode + .dvc manifests"]
+        hosted["GitHub-hosted runner\nubuntu-latest\n(merge · validate · PR jobs)"]
+        repo --> hosted
+    end
+
+    subgraph aws["AWS us-east-1 — Account 055677744286"]
+
+        subgraph ec2_box["EC2 t3.large · 100 GB gp3 · us-east-1a\nec2-user @ 100.50.251.97  ←  Elastic IP"]
+            runner["GitHub Actions\nself-hosted runner\n(systemd)"]
+            mlflow_svc["MLflow Server\n:5000\n(systemd)\nSQLite backend"]
+
+            subgraph k3s["k3s cluster"]
+                subgraph ns_wms["namespace: wms"]
+                    model_pod["wms-model-api pod\nFastAPI · container :8000\nNodePort :30080"]
+                end
+                subgraph ns_mon["namespace: monitoring"]
+                    prom["Prometheus\nNodePort :30900"]
+                    grafana["Grafana\nNodePort :30300"]
+                end
+            end
+        end
+
+        s3_dvc[("S3\nwms-dvc-data-055677744286")]
+        s3_mlf[("S3\nwms-mlflow-artifacts-055677744286")]
+        ecr["ECR\n055677744286.dkr.ecr\n.us-east-1.amazonaws.com/wms-model"]
+    end
+
+    cli -->|"git push"| repo
+    hosted -->|"aws ec2 start-instances"| runner
+    hosted -->|"dvc push / pull"| s3_dvc
+    hosted -->|"docker build + push"| ecr
+    runner -->|"train.py + quality-gate.py"| mlflow_svc
+    mlflow_svc -->|"boto3 · artifact storage"| s3_mlf
+    ecr -->|"imagePull"| model_pod
+    model_pod -->|"MlflowClient · load Production model"| mlflow_svc
+    prom -->|"scrape :8000/metrics"| model_pod
+    grafana -->|"PromQL"| prom
+
+    cli -->|"http://100.50.251.97:5000"| mlflow_svc
+    cli -->|"http://100.50.251.97:30080"| model_pod
+    cli -->|"http://100.50.251.97:30300"| grafana
+
+    style ec2_box fill:#fff8e1,stroke:#f9a825
+    style k3s fill:#e3f2fd,stroke:#1565c0
+    style ns_wms fill:#e8f5e9,stroke:#2e7d32
+    style ns_mon fill:#fce4ec,stroke:#880e4f
+    style aws fill:#fff3e0,stroke:#e65100
+    style gh fill:#f3e5f5,stroke:#4a148c
+    style dev fill:#e8eaf6,stroke:#283593
+```
+
+**Key endpoints:**
+
+| Service    | URL                                  |
+| ---------- | ------------------------------------ |
+| MLflow UI  | `http://100.50.251.97:5000`          |
+| Model API  | `http://100.50.251.97:30080/predict` |
+| Grafana    | `http://100.50.251.97:30300`         |
+| Prometheus | `http://100.50.251.97:30900`         |
 
 ---
 
