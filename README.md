@@ -450,7 +450,7 @@ Output: 512×512 binary mask (meter region)
 - EC2 (t3.large, ephemeral): ~$1-2/month
 - S3 storage: ~$1/month
 - **Total: ~$3/month**
-- Note: t3.xlarge (16GB) recommended for production, but AWS Academy limits to t3.large (8GB)
+- Note: using t3.large (8GB RAM) --- sufficient for training and serving
 
 **Traditional (24/7 EC2):**
 

@@ -4,24 +4,18 @@ This guide explains how to deploy and use the monitoring stack (Prometheus + Gra
 
 ## ⚠️ Important: Resource Requirements
 
-**Minimum:** t3.medium (4 GB RAM)
-**Recommended:** t3.large (8 GB RAM)
-**DO NOT USE:** t3.small (2 GB RAM) - will cause OOM crashes!
-**Note:** t3.xlarge (16 GB RAM) ideal for production, but AWS Academy limits to t3.large
+**Instance:** t3.large (8 GB RAM, 2 vCPU)
 
 The monitoring stack adds significant resource usage:
 - Prometheus: ~400-800 MB RAM
 - Grafana: ~128-256 MB RAM
 - Alertmanager: ~64-128 MB RAM
 
-**Cost impact:** t3.medium is $0.0416/h vs t3.small $0.0208/h
-Over 100 hours of testing: ~$2 difference (well within budget)
-
 ---
 
 ## 📋 Prerequisites
 
-1. **EC2 instance running** (t3.medium or larger)
+1. **EC2 instance running** (t3.large)
 2. **k3s installed** and accessible
 3. **WMS model deployed** (see deployment docs)
 4. **kubectl configured** to access k3s cluster
@@ -247,11 +241,7 @@ kubectl top pods -n monitoring
 # 2. Reduce Prometheus retention
 # Edit values.yaml: retention: 3d (instead of 7d)
 
-# 3. Upgrade to t3.large (if on t3.medium)
-# Better solution: more stable, sufficient for monitoring stack
-# (t3.xlarge ideal but not available in AWS Academy)
-
-# 4. Reduce scrape interval
+# 3. Reduce scrape interval
 # Edit servicemonitor.yaml: interval: 30s (instead of 15s)
 ```
 
@@ -300,7 +290,7 @@ kubectl delete configmap wms-dashboard-configmap -n monitoring
 ### During Active Testing
 
 Keep monitoring stack running while testing:
-- Cost: ~$0.04/hour (t3.medium)
+- Cost: ~$0.08/hour (t3.large)
 - Good for: Load testing, debugging, optimization
 
 ### When Not Testing
@@ -321,7 +311,7 @@ helm uninstall kube-prometheus-stack -n monitoring
 **Option 2: Always-on (if budget allows)**
 - Keep monitoring running 24/7
 - Full observability
-- ~$30/month extra (t3.medium vs t3.small)
+- ~$60/month (t3.large 24/7)
 
 ---
 

@@ -529,46 +529,10 @@ git push
 
 ## AWS Academy Lab: t3.xlarge Instance Type Not Allowed
 
-**Status:** ✅ RESOLVED (using t3.large instead)
+**Status:** ✅ RESOLVED (using t3.large)
 
-**Issue:**
-AWS Academy Lab accounts restrict certain EC2 instance types. When attempting to create a t3.xlarge instance (16GB RAM, 4 vCPU) via Terraform, the operation is blocked with `UnauthorizedOperation` error.
+AWS Academy Lab ogranicza typy instancji --- t3.xlarge jest zablokowany (`UnauthorizedOperation`). Projekt używa t3.large (8GB RAM, $0.0416/h), który jest w pełni wystarczający dla k3s, MLflow i pipeline treningowego.
 
-**Symptoms:**
-
-```
-Error: creating EC2 Instance: operation error EC2: RunInstances, https response error StatusCode: 403,
-RequestID: ..., api error UnauthorizedOperation: You are not authorized to perform this operation.
-User: arn:aws:sts::055677744286:assumed-role/voclabs/... is not authorized to perform:
-ec2:RunInstances on resource: arn:aws:ec2:us-east-1:055677744286:instance/*
-```
-
-**Root cause:**
-
-- AWS Academy Lab limits instance types to cost-effective options
-- t3.xlarge (16GB RAM, $0.0832/hour) is above the allowed threshold
-- t3.large (8GB RAM, $0.0416/hour) and smaller are permitted
-
-**Solution:**
-Updated `infrastructure/terraform.tfvars` to use t3.large instead:
-
-```hcl
-instance_type = "t3.large" # 8GB RAM, 2 vCPU - adequate for ML workloads (AWS Academy limit)
-```
-
-**Impact on project:**
-
-- ✅ t3.large (8GB RAM) is sufficient for development and testing
-- ✅ k3s, MLflow, and training pipeline work correctly
-- ⚠️ For large datasets (>100 images), may need batch size optimization
-- 💡 Production deployments (non-AWS Academy) should use t3.xlarge or larger
-
-**Cost savings:**
-
-- t3.large: ~$0.0416/hour (~$7.50/month 24/7, or ~$1-2/month ephemeral)
-- t3.xlarge: ~$0.0832/hour (~$15/month 24/7, or ~$2-3/month ephemeral)
-
-**Date discovered:** 2026-02-10
 **Date resolved:** 2026-02-10
 
 ---

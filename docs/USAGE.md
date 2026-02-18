@@ -528,7 +528,7 @@ terraform apply
 
 **Common changes:**
 
-- Change EC2 instance type (t3.large → t3.medium for cost savings)
+- Change EC2 instance type in `terraform.tfvars`
 - Update security group rules
 - Adjust storage size
 
